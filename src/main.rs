@@ -48,7 +48,7 @@ impl EventHandler for ChessGame {
 }
 
 fn main() -> GameResult {
-    println!("Starting Rust Chess Game with timer functionality");
+    println!("Starting Rust Chess Game");
     
     let resource_dir = std::path::PathBuf::from("./assets");
     

@@ -1,7 +1,6 @@
 use crate::piece::{Piece, PieceType, Color};
 use crate::zobrist::{ZOBRIST, WHITE, BLACK};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 pub const BOARD_SIZE: usize = 8;
 pub type Square = Option<Piece>;
@@ -10,108 +9,6 @@ pub type Board = [[Square; BOARD_SIZE]; BOARD_SIZE];
 pub struct PromotionState {
     pub position: (usize, usize),
     pub color: Color,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Timer {
-    pub initial_time: Duration,
-    pub remaining: Duration,
-    pub increment: Duration,
-    pub last_update: Option<Instant>,
-    pub is_running: bool,
-}
-
-impl Timer {
-    pub fn new(minutes: u64, increment_seconds: u64) -> Self {
-        Self {
-            initial_time: Duration::from_secs(minutes * 60),
-            remaining: Duration::from_secs(minutes * 60),
-            increment: Duration::from_secs(increment_seconds),
-            last_update: None,
-            is_running: false,
-        }
-    }
-    
-    pub fn start(&mut self) {
-        if !self.is_running {
-            println!("Timer started with remaining time: {}", self.format_time());
-            self.last_update = Some(Instant::now());
-            self.is_running = true;
-        }
-    }
-    
-    pub fn stop(&mut self) -> bool {
-        if self.is_running {
-            if let Some(last_update) = self.last_update {
-                let elapsed = last_update.elapsed();
-                if elapsed <= self.remaining {
-                    self.remaining -= elapsed;
-                    self.remaining += self.increment; // Add increment
-                    println!("Timer stopped at: {} (added increment: {}s)", 
-                             self.format_time(), self.increment.as_secs());
-                } else {
-                    println!("Timer expired during stop!");
-                    self.remaining = Duration::from_secs(0);
-                    self.is_running = false;
-                    return true; // Time flag fallen
-                }
-            }
-            self.is_running = false;
-        }
-        false // Time not expired
-    }
-    
-    pub fn update(&mut self) -> bool {
-        if !self.is_running {
-            return false;
-        }
-        
-        if let Some(last_update) = self.last_update {
-            let elapsed = last_update.elapsed();
-            
-            // Only update if some measurable time has passed
-            if elapsed.as_millis() > 0 {
-                // Check if time has expired
-                if elapsed >= self.remaining {
-                    println!("Timer expired! Elapsed: {:?}, Remaining: {:?}", 
-                             elapsed, self.remaining);
-                    self.remaining = Duration::from_secs(0);
-                    self.is_running = false;
-                    return true; // Time flag fallen
-                }
-                
-                // Decrement the remaining time
-                self.remaining = self.remaining.saturating_sub(elapsed);
-                
-                // Update the last_update to now to start counting from this point
-                self.last_update = Some(Instant::now());
-                
-                // Debug output every whole second change
-                if elapsed.as_secs() > 0 {
-                    println!("Timer updated, remaining: {}", self.format_time());
-                }
-            }
-        } else {
-            // If last_update is None but timer is running, reset it
-            println!("Timer was running but last_update was None, resetting timer");
-            self.last_update = Some(Instant::now());
-        }
-        
-        false // Time not expired
-    }
-    
-    pub fn reset(&mut self) {
-        self.remaining = self.initial_time;
-        self.last_update = None;
-        self.is_running = false;
-    }
-    
-    pub fn format_time(&self) -> String {
-        let total_seconds = self.remaining.as_secs();
-        let minutes = total_seconds / 60;
-        let seconds = total_seconds % 60;
-        format!("{:02}:{:02}", minutes, seconds)
-    }
 }
 
 pub struct GameState {
@@ -128,12 +25,6 @@ pub struct GameState {
     
     pub position_history: HashMap<u64, u32>, // Maps hash to occurrence count
     pub current_hash: u64,                  // Current position hash
-    
-    pub draw_offered: Option<Color>, // Tracks which player has offered a draw
-    
-    pub white_timer: Timer,
-    pub black_timer: Timer,
-    pub timer_enabled: bool,
     
     move_cache: HashMap<u64, Vec<((usize, usize), (usize, usize))>>, // Maps position hash to legal moves
 }
@@ -178,10 +69,6 @@ impl GameState {
             promotion_pending: None,
             position_history: HashMap::new(),
             current_hash: 0, // Will be calculated below
-            draw_offered: None,
-            white_timer: Timer::new(10, 0), // 10 minutes, no increment by default
-            black_timer: Timer::new(10, 0),
-            timer_enabled: false,
             move_cache: HashMap::new(),
         };
         
@@ -200,8 +87,6 @@ impl GameState {
         if self.promotion_pending.is_some() {
             return false;
         }
-        
-        self.draw_offered = None;
         
         let (from_rank, from_file) = from;
         let (to_rank, to_file) = to;
@@ -435,18 +320,6 @@ impl GameState {
     }
     
     fn switch_turn(&mut self) {
-        if self.timer_enabled {
-            // Stop the current player's timer and add increment
-            match self.current_turn {
-                Color::White => {
-                    self.white_timer.stop();
-                },
-                Color::Black => {
-                    self.black_timer.stop();
-                }
-            }
-        }
-        
         self.current_hash ^= ZOBRIST.side_to_move_key;
         
         self.current_turn = match self.current_turn {
@@ -456,18 +329,6 @@ impl GameState {
                 Color::White
             },
         };
-        
-        if self.timer_enabled {
-            // Start the next player's timer
-            match self.current_turn {
-                Color::White => {
-                    self.white_timer.start();
-                },
-                Color::Black => {
-                    self.black_timer.start();
-                }
-            }
-        }
     }
     
     fn update_castling_flags(&mut self, color: Color) {
@@ -730,17 +591,6 @@ impl GameState {
         false
     }
     
-    pub fn offer_draw(&mut self, color: Color) {
-        self.draw_offered = Some(color);
-    }
-    
-    pub fn accept_draw(&self) -> bool {
-        match self.draw_offered {
-            Some(color) => color != self.current_turn, // Can accept if the other player offered
-            None => false,                             // No offer to accept
-        }
-    }
-    
     pub fn is_draw(&self) -> bool {
         self.is_stalemate() || 
         self.is_threefold_repetition() || 
@@ -770,10 +620,6 @@ impl GameState {
             promotion_pending: None, // Don't need to copy this for simulation
             position_history: HashMap::new(), // Don't need to copy history for simulation
             current_hash: self.current_hash, // Copy the hash
-            draw_offered: None, // Don't need to copy for simulation
-            white_timer: self.white_timer,
-            black_timer: self.black_timer,
-            timer_enabled: self.timer_enabled,
             move_cache: HashMap::new(), // Don't need to copy move cache for simulation
         }
     }
@@ -900,114 +746,5 @@ impl GameState {
     
     fn clear_move_cache(&mut self) {
         self.move_cache.clear();
-    }
-    
-    pub fn set_timers(&mut self, minutes: u64, increment_seconds: u64) {
-        self.white_timer = Timer::new(minutes, increment_seconds);
-        self.black_timer = Timer::new(minutes, increment_seconds);
-        self.timer_enabled = true;
-    }
-    
-    pub fn disable_timers(&mut self) {
-        println!("Disabling timers in GameState");
-        
-        // Stop any running timers first
-        if self.timer_enabled {
-            match self.current_turn {
-                Color::White => { self.white_timer.stop(); },
-                Color::Black => { self.black_timer.stop(); }
-            }
-        }
-        
-        self.timer_enabled = false;
-        
-        // Reset last_update to avoid counting elapsed time while disabled
-        self.white_timer.last_update = None;
-        self.black_timer.last_update = None;
-        self.white_timer.is_running = false;
-        self.black_timer.is_running = false;
-    }
-    
-    pub fn enable_timers(&mut self) {
-        println!("Enabling timers in GameState for {:?}", self.current_turn);
-        self.timer_enabled = true;
-        
-        // Ensure previous timers are stopped
-        self.white_timer.is_running = false;
-        self.black_timer.is_running = false;
-        
-        // Start only the current player's timer
-        match self.current_turn {
-            Color::White => {
-                self.white_timer.start();
-                println!("White timer is now running: {}", self.white_timer.is_running);
-            },
-            Color::Black => {
-                self.black_timer.start();
-                println!("Black timer is now running: {}", self.black_timer.is_running);
-            }
-        }
-    }
-    
-    pub fn reset_timers(&mut self) {
-        self.white_timer.reset();
-        self.black_timer.reset();
-    }
-    
-    pub fn get_current_timer(&self) -> &Timer {
-        match self.current_turn {
-            Color::White => &self.white_timer,
-            Color::Black => &self.black_timer,
-        }
-    }
-    
-    pub fn get_current_timer_mut(&mut self) -> &mut Timer {
-        match self.current_turn {
-            Color::White => &mut self.white_timer,
-            Color::Black => &mut self.black_timer,
-        }
-    }
-    
-    pub fn update_timers(&mut self) -> bool {
-        if !self.timer_enabled {
-            return false;
-        }
-        
-        let result = match self.current_turn {
-            Color::White => {
-                let time_before = self.white_timer.remaining.as_secs();
-                let flag_fallen = self.white_timer.update();
-                let time_after = self.white_timer.remaining.as_secs();
-                
-                if time_before != time_after {
-                    println!("White timer updated: {} -> {}", 
-                             time_before, time_after);
-                }
-                
-                flag_fallen
-            },
-            Color::Black => {
-                let time_before = self.black_timer.remaining.as_secs();
-                let flag_fallen = self.black_timer.update();
-                let time_after = self.black_timer.remaining.as_secs();
-                
-                if time_before != time_after {
-                    println!("Black timer updated: {} -> {}", 
-                             time_before, time_after);
-                }
-                
-                flag_fallen
-            },
-        };
-        
-        result
-    }
-    
-    pub fn is_time_up(&self) -> bool {
-        if !self.timer_enabled {
-            return false;
-        }
-        
-        self.white_timer.remaining.as_secs() == 0 || self.black_timer.remaining.as_secs() == 0
     }
 } 
