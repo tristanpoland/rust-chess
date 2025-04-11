@@ -1,107 +1,167 @@
 # Rust Chess Game
 
-A simple chess game implemented in Rust using the ggez game engine.
+A feature-complete chess implementation written in Rust using the GGEZ game engine.
 
 ## Features
 
-- Graphical chess board with piece images
-- Complete chess piece movement according to rules:
-  - Castling (kingside and queenside)
-  - En passant captures
-  - Pawn promotion to queen, rook, bishop, or knight
-- Rules enforcement:
-  - Check detection
-  - Checkmate detection
-  - Stalemate detection
-  - Can't move into check
-  - Can't castle through check or while in check
-- Complete draw conditions:
-  - Draw by threefold repetition
-  - Draw by fifty-move rule
-  - Draw by insufficient material
-- Turn-based gameplay
-- Visual highlighting of selected pieces and possible moves
-- Game management:
-  - New game button
+- Complete Chess Rules Implementation:
+  - Standard piece movement (pawn, knight, bishop, rook, queen, king)
+  - Special moves: castling (kingside/queenside), en passant, pawn promotion
+  - Check, checkmate, and stalemate detection
+  - Draw conditions: threefold repetition, fifty-move rule, insufficient material
+  - Move validation prevents illegal moves (moving into check, etc.)
+
+- User Interface:
+  - Graphical board with chess piece images
+  - Highlighted legal moves for selected pieces
+  - Visual indicators for check, checkmate, and stalemate
   - Algebraic notation coordinate display
-- Network play:
-  - Host or join multiplayer games
+  - Promotion dialog for pawn upgrades
+  - Game status display
+
+- Network Play:
+  - Host or join games over a network
   - Real-time move synchronization
   - Game listing and selection
   - Player name customization
+  - In-game communication features (draw offers, resignation, rematches)
 
-## Requirements
+## Installation
 
-- Rust (latest stable version recommended)
-- ggez game engine dependencies (automatically installed via Cargo)
+### Prerequisites
 
-## Running the Game
+- Rust programming language (latest stable version) - [Install Rust](https://www.rust-lang.org/tools/install)
+- Required dependencies for GGEZ:
+  - **macOS**: `brew install pkg-config sdl2`
+  - **Linux**: `sudo apt install pkg-config libsdl2-dev libsdl2-2.0-0`
+  - **Windows**: SDL2 will be automatically downloaded if needed
 
-1. Clone this repository
-2. Navigate to the project directory
-3. Run the game using Cargo:
+### Building from Source
 
+1. Clone the repository:
+
+```bash
+git clone https://github.com/yourusername/rust-chess.git
+cd rust-chess
 ```
+
+2. Build and run the game:
+
+```bash
 cargo run --release
 ```
 
-## Network Play
+## Playing the Game
 
-To play against other players over the network:
+### Local Play
 
-### Starting a Server
+To start a local game (two players on the same computer):
 
+```bash
+cargo run --release
 ```
+
+### Starting a Server (For Network Play)
+
+To run a dedicated chess server:
+
+```bash
 cargo run --release -- --server
 ```
 
-### Playing a Network Game
+The server will listen on port 8080 by default.
 
+### Joining a Network Game
+
+To play over the network:
+
+```bash
+cargo run --release -- --network
 ```
-cargo run --release -- --network [--address SERVER_ADDRESS] [--name PLAYER_NAME] [--join GAME_ID]
+
+Additional options:
+- `--address <server_address>`: Connect to a specific server (default: localhost:8080)
+- `--name <player_name>`: Set your display name
+- `--join <game_id>`: Join a specific game directly
+
+Example:
+```bash
+cargo run --release -- --network --address chessserver.example.com:8080 --name Player1
 ```
 
-- `--address`: Optional server address (default: localhost:8080)
-- `--name`: Optional player name
-- `--join`: Optional game ID to join directly
+## Game Controls
 
-If no specific game ID is provided, you'll be prompted to create a new game or join an existing one.
+### Board Interaction
 
-## How to Play
+- **Select a piece**: Left-click on a chess piece
+- **Move a piece**: Left-click on a highlighted square
+- **Deselect a piece**: Left-click on the selected piece again
+- **See possible moves**: They're automatically highlighted after selecting a piece
 
-- Click on a piece to select it
-- Click on a highlighted square to move the selected piece
-- Click on the selected piece again to deselect it
-- The game automatically alternates turns between white and black
-- When a pawn reaches the opposite end of the board, a promotion dialog appears
-- When a king is in check, checkmate, or stalemate, the status is shown at the bottom
-- Use the "New Game" button to reset the board and start again
-- Algebraic chess notation coordinates are displayed on the board squares
+### Pawn Promotion
 
-## Draw Conditions
+When a pawn reaches the opposite end of the board:
+1. A promotion dialog appears
+2. Select the piece you want to promote to (Queen, Rook, Bishop, Knight)
 
-The game will automatically detect the following draw conditions:
+### Network Play Options
 
-- **Stalemate**: When the current player has no legal moves but is not in check
-- **Threefold Repetition**: When the same position occurs three times
-- **Fifty-Move Rule**: When 50 moves have been made by each player without a pawn move or capture
-- **Insufficient Material**: When neither player has enough pieces to checkmate (e.g., king vs king)
+- **Create a new game**: Click the "Create Game" button when in network mode
+- **Join a game**: Select from the list of available games and click "Join"
+- **Refresh game list**: Click the "Refresh" button to update the list of available games
+- **Offer a draw**: Click the "Offer Draw" button during a game
+- **Resign a game**: Click the "Resign" button to forfeit
+- **Request a rematch**: Click the "Rematch" button after a game ends
 
-## Technical Details
+## Project Structure
 
-The game structure is organized into several modules:
+- `src/main.rs`: Entry point and command-line argument handling
+- `src/bin/local_game.rs`: Alternative entry point for local game only
+- `src/board.rs`: Game state and chess rules implementation
+- `src/piece.rs`: Chess piece definitions and movement logic
+- `src/gui.rs`: User interface and rendering
+- `src/assets.rs`: Graphics loading and management
+- `src/network.rs`: Client networking functionality
+- `src/server.rs`: Multiplayer game server implementation
+- `src/zobrist.rs`: Position hashing for threefold repetition detection
 
-- `piece.rs`: Defines the chess pieces and their movement rules
-- `board.rs`: Manages the game state, board representation, and rule enforcement
-- `gui.rs`: Handles rendering, user interaction, and integrated networking
-- `assets.rs`: Manages loading and displaying piece images
-- `network.rs`: Contains client networking functionality
-- `server.rs`: Implements the multiplayer game server
-- `main.rs`: Entry point that sets up the game window and event loop
+## Building Custom Versions
 
-## Future Improvements
+### Local Play Only Version
 
-- Game history and move notation
-- Load and save functionality
-- AI opponent
-- Enhanced network play features 
+```bash
+cargo run --release --bin local_game
+```
+
+### Optimized Release Build
+
+```bash
+cargo build --release
+```
+
+The optimized executable will be located at `target/release/chess`.
+
+## Troubleshooting
+
+### Common Issues
+
+- **"Unable to connect to server"**:
+  - Ensure the server is running
+  - Check your network connection
+  - Verify the server address and port
+
+- **"Cannot load images"**:
+  - Make sure you're running the game from the project directory
+  - Verify that the `assets/images` folder exists and contains chess piece images
+
+- **Performance Problems**:
+  - Use the `--release` flag when building/running for better performance
+  - Close other resource-intensive applications
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details. 
