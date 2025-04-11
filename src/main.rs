@@ -27,6 +27,14 @@ impl ChessGame {
 
     fn handle_network_message(&mut self) -> GameResult<()> {
         if let Some(client) = &mut self.network_client {
+            if !client.is_connected() {
+                println!("Attempting to reconnect...");
+                if let Err(e) = client.reconnect() {
+                    println!("Failed to reconnect: {}", e);
+                    return Ok(());
+                }
+            }
+
             match client.receive_message() {
                 Ok(Some(NetworkMessage::Move { from, to, promotion })) => {
                     self.gui.handle_network_move(from, to, promotion)?;
@@ -43,7 +51,12 @@ impl ChessGame {
                 Ok(None) => {
                     // No message received, continue
                 }
-                Err(e) => println!("Network error: {}", e),
+                Err(e) => {
+                    println!("Network error: {}", e);
+                    if !client.is_connected() {
+                        println!("Connection lost, will attempt to reconnect");
+                    }
+                }
             }
         }
         Ok(())
@@ -69,7 +82,13 @@ impl EventHandler for ChessGame {
     ) -> GameResult<()> {
         if let Some(move_info) = self.gui.handle_mouse_down(button, x, y)? {
             if let Some(client) = &mut self.network_client {
-                client.send_move(move_info.from, move_info.to, move_info.promotion)?;
+                if !client.is_connected() {
+                    println!("Cannot send move - not connected to server");
+                    return Ok(());
+                }
+                if let Err(e) = client.send_move(move_info.from, move_info.to, move_info.promotion) {
+                    println!("Error sending move: {}", e);
+                }
             }
         }
         Ok(())

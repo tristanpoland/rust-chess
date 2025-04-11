@@ -26,42 +26,78 @@ pub enum NetworkMessage {
 }
 
 pub struct ChessClient {
-    pub stream: TcpStream,
+    pub stream: Option<TcpStream>,
     pub is_white: bool,
     buffer: Vec<u8>,
+    server_address: String,
 }
 
 impl ChessClient {
     pub fn new(server_address: &str) -> Result<Self, std::io::Error> {
-        let mut stream = TcpStream::connect(server_address)?;
+        let stream = TcpStream::connect(server_address)?;
         stream.set_nonblocking(true)?;
         Ok(Self {
-            stream,
+            stream: Some(stream),
             is_white: false,
             buffer: Vec::new(),
+            server_address: server_address.to_string(),
         })
     }
 
-    pub fn with_color(stream: TcpStream, is_white: bool) -> Self {
+    pub fn with_color(stream: TcpStream, is_white: bool, server_address: &str) -> Self {
         Self {
-            stream,
+            stream: Some(stream),
             is_white,
             buffer: Vec::new(),
+            server_address: server_address.to_string(),
+        }
+    }
+
+    pub fn reconnect(&mut self) -> Result<(), std::io::Error> {
+        println!("Attempting to reconnect to server...");
+        match TcpStream::connect(&self.server_address) {
+            Ok(stream) => {
+                stream.set_nonblocking(true)?;
+                self.stream = Some(stream);
+                println!("Successfully reconnected to server");
+                Ok(())
+            }
+            Err(e) => {
+                println!("Failed to reconnect: {}", e);
+                Err(e)
+            }
         }
     }
 
     pub fn send_move(&mut self, from: (u8, u8), to: (u8, u8), promotion: Option<char>) -> Result<(), std::io::Error> {
         let message = NetworkMessage::Move { from, to, promotion };
         let serialized = serde_json::to_string(&message)?;
-        self.stream.write_all(serialized.as_bytes())?;
-        Ok(())
+        
+        if let Some(stream) = &mut self.stream {
+            match stream.write_all(format!("{}\n", serialized).as_bytes()) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    println!("Error sending move: {}", e);
+                    self.stream = None;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"))
+        }
     }
 
     pub fn receive_message(&mut self) -> Result<Option<NetworkMessage>, std::io::Error> {
+        if self.stream.is_none() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"));
+        }
+
         let mut temp_buffer = [0; 1024];
-        match self.stream.read(&mut temp_buffer) {
+        match self.stream.as_mut().unwrap().read(&mut temp_buffer) {
             Ok(0) => {
                 // Connection closed
+                println!("Connection closed by server");
+                self.stream = None;
                 return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "Connection closed"));
             }
             Ok(n) => {
@@ -70,39 +106,43 @@ impl ChessClient {
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
                 // No data available, continue
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                println!("Error reading from server: {}", e);
+                self.stream = None;
+                return Err(e);
+            }
         }
 
-        // Try to parse a complete message
-        match serde_json::from_slice::<NetworkMessage>(&self.buffer) {
-            Ok(message) => {
-                // Find the end of the JSON message
-                if let Some(pos) = self.buffer.iter().position(|&b| b == b'}') {
-                    // Remove the processed message from the buffer
-                    self.buffer.drain(..=pos);
-                    Ok(Some(message))
-                } else {
-                    // Incomplete message, keep waiting
-                    Ok(None)
+        // Try to find a complete message (ending with newline)
+        if let Some(pos) = self.buffer.iter().position(|&b| b == b'\n') {
+            let message_bytes = &self.buffer[..pos];
+            let message = serde_json::from_slice::<NetworkMessage>(message_bytes);
+            
+            // Remove the processed message and newline from the buffer
+            self.buffer.drain(..=pos);
+            
+            match message {
+                Ok(msg) => Ok(Some(msg)),
+                Err(e) => {
+                    println!("Failed to parse message: {}", e);
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to parse message: {}", e)
+                    ))
                 }
             }
-            Err(e) if e.is_eof() => {
-                // Incomplete message, keep waiting
-                Ok(None)
-            }
-            Err(e) => {
-                // Invalid message, clear buffer and return error
-                self.buffer.clear();
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse message: {}", e)
-                ))
-            }
+        } else {
+            // No complete message yet
+            Ok(None)
         }
     }
 
     pub fn is_white(&self) -> bool {
         self.is_white
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.stream.is_some()
     }
 }
 
@@ -129,22 +169,24 @@ impl ChessServer {
 
         // Create clients and assign colors
         let mut client1 = ChessClient {
-            stream: stream1,
+            stream: Some(stream1),
             is_white: true,
             buffer: Vec::new(),
+            server_address: "".to_string(),
         };
         let mut client2 = ChessClient {
-            stream: stream2,
+            stream: Some(stream2),
             is_white: false,
             buffer: Vec::new(),
+            server_address: "".to_string(),
         };
 
         // Send color assignments
         let message1 = NetworkMessage::GameStart { is_white: true };
         let message2 = NetworkMessage::GameStart { is_white: false };
         
-        client1.stream.write_all(serde_json::to_string(&message1)?.as_bytes())?;
-        client2.stream.write_all(serde_json::to_string(&message2)?.as_bytes())?;
+        client1.stream.as_mut().unwrap().write_all(serde_json::to_string(&message1)?.as_bytes())?;
+        client2.stream.as_mut().unwrap().write_all(serde_json::to_string(&message2)?.as_bytes())?;
 
         Ok((client1, client2))
     }
