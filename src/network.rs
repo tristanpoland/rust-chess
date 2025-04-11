@@ -13,6 +13,7 @@ pub enum NetworkMessage {
     },
     GameStart {
         is_white: bool,
+        game_id: String,
     },
     GameEnd {
         reason: String,
@@ -23,6 +24,34 @@ pub enum NetworkMessage {
         promotion_pending: Option<(usize, usize, Color)>,
         game_over: bool,
     },
+    CreateGame {
+        player_name: String,
+    },
+    JoinGame {
+        game_id: String,
+        player_name: String,
+    },
+    GameCreated {
+        game_id: String,
+    },
+    GameList {
+        available_games: Vec<GameInfo>,
+    },
+    RequestGameList,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GameInfo {
+    pub game_id: String,
+    pub host_name: String,
+    pub status: GameStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum GameStatus {
+    Waiting,
+    InProgress,
+    Completed,
 }
 
 pub struct ChessClient {
@@ -182,8 +211,8 @@ impl ChessServer {
         };
 
         // Send color assignments
-        let message1 = NetworkMessage::GameStart { is_white: true };
-        let message2 = NetworkMessage::GameStart { is_white: false };
+        let message1 = NetworkMessage::GameStart { is_white: true, game_id: "".to_string() };
+        let message2 = NetworkMessage::GameStart { is_white: false, game_id: "".to_string() };
         
         client1.stream.as_mut().unwrap().write_all(serde_json::to_string(&message1)?.as_bytes())?;
         client2.stream.as_mut().unwrap().write_all(serde_json::to_string(&message2)?.as_bytes())?;
