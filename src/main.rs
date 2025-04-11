@@ -5,7 +5,8 @@ use ggez::conf::{WindowSetup, WindowMode};
 use std::env;
 use std::thread;
 use std::io::{self, Write};
-
+mod embedded_assets;
+pub use embedded_assets;
 use chess::gui::ChessGui;
 
 enum GameMode {
