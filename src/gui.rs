@@ -5,6 +5,7 @@ use ggez::mint::{Point2, Vector2};
 
 use crate::board::{GameState, BOARD_SIZE, PromotionState};
 use crate::piece::{PieceType, Color, Piece};
+use crate::embedded_assets::EmbeddedAssets;
 use crate::network::{ChessClient, ClientRole, GameInfo, GameStatus, NetworkMessage};
 use std::io::Write;
 use std::time::{Duration, Instant};
