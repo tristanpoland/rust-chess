@@ -11,6 +11,11 @@ pub struct PromotionState {
     pub color: Color,
 }
 
+pub struct PromotionPending {
+    pub position: (usize, usize),
+    pub color: Color,
+}
+
 pub struct GameState {
     pub board: Board,
     pub current_turn: Color,
@@ -27,6 +32,7 @@ pub struct GameState {
     pub current_hash: u64,                  // Current position hash
     
     move_cache: HashMap<u64, Vec<((usize, usize), (usize, usize))>>, // Maps position hash to legal moves
+    pub game_over: bool,
 }
 
 impl GameState {
@@ -70,6 +76,7 @@ impl GameState {
             position_history: HashMap::new(),
             current_hash: 0, // Will be calculated below
             move_cache: HashMap::new(),
+            game_over: false,
         };
         
         state.current_hash = state.calculate_zobrist_hash();
@@ -621,6 +628,7 @@ impl GameState {
             position_history: HashMap::new(), // Don't need to copy history for simulation
             current_hash: self.current_hash, // Copy the hash
             move_cache: HashMap::new(), // Don't need to copy move cache for simulation
+            game_over: self.game_over,
         }
     }
     
@@ -746,5 +754,9 @@ impl GameState {
     
     fn clear_move_cache(&mut self) {
         self.move_cache.clear();
+    }
+
+    pub fn is_game_over(&self) -> bool {
+        self.game_over
     }
 } 

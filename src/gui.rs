@@ -3,8 +3,8 @@ use ggez::graphics::{self, Canvas, Color as GgezColor, DrawParam, Rect, Text};
 use ggez::input::mouse::MouseButton;
 use ggez::mint::{Point2, Vector2};
 
-use crate::board::{GameState, BOARD_SIZE};
-use crate::piece::{PieceType, Color};
+use crate::board::{GameState, BOARD_SIZE, PromotionState};
+use crate::piece::{PieceType, Color, Piece};
 use crate::assets::Assets;
 
 const SQUARE_SIZE: f32 = 60.0;
@@ -84,6 +84,12 @@ impl Button {
     }
 }
 
+pub struct MoveInfo {
+    pub from: (u8, u8),
+    pub to: (u8, u8),
+    pub promotion: Option<char>,
+}
+
 pub struct ChessGui {
     game_state: GameState,
     selected_square: Option<(usize, usize)>,
@@ -92,7 +98,9 @@ pub struct ChessGui {
     restart_button: Button,
     show_square_coordinates: bool,
     game_over: bool,
-    needs_redraw: bool, // Flag to control redrawing
+    needs_redraw: bool,
+    is_network_game: bool,
+    player_color: Option<Color>,
 }
 
 impl ChessGui {
@@ -103,7 +111,6 @@ impl ChessGui {
         let board_bottom = BOARD_OFFSET_Y + (BOARD_SIZE as f32 * SQUARE_SIZE);
         let button_y = board_bottom + 120.0;
         
-        // Center the restart button
         let board_width = BOARD_SIZE as f32 * SQUARE_SIZE;
         let center_x = BOARD_OFFSET_X + (board_width / 2.0) - (BUTTON_WIDTH / 2.0);
         
@@ -121,10 +128,74 @@ impl ChessGui {
             possible_moves: Vec::new(),
             assets,
             restart_button,
-            show_square_coordinates: true, // Set to true by default
+            show_square_coordinates: true,
             game_over: false,
             needs_redraw: true,
+            is_network_game: false,
+            player_color: None,
         })
+    }
+    
+    pub fn set_player_color(&mut self, is_white: bool) {
+        self.player_color = Some(if is_white { Color::White } else { Color::Black });
+        self.is_network_game = true;
+        self.needs_redraw = true;
+    }
+    
+    pub fn handle_network_move(&mut self, from: (u8, u8), to: (u8, u8), promotion: Option<char>) -> GameResult<()> {
+        let from = (from.0 as usize, from.1 as usize);
+        let to = (to.0 as usize, to.1 as usize);
+        
+        if let Some(promotion) = promotion {
+            let piece_type = match promotion {
+                'Q' => PieceType::Queen,
+                'R' => PieceType::Rook,
+                'B' => PieceType::Bishop,
+                'N' => PieceType::Knight,
+                _ => return Ok(()),
+            };
+            if !self.game_state.promote_pawn(piece_type) {
+                return Ok(());
+            }
+        }
+        
+        if !self.game_state.make_move(from, to) {
+            return Ok(());
+        }
+        
+        self.selected_square = None;
+        self.possible_moves.clear();
+        self.needs_redraw = true;
+        
+        Ok(())
+    }
+    
+    pub fn update_game_state(&mut self, board: [[Option<(PieceType, Color)>; 8]; 8], current_turn: Color, promotion_pending: Option<(usize, usize, Color)>, game_over: bool) -> GameResult<()> {
+        // Update the board
+        for rank in 0..8 {
+            for file in 0..8 {
+                self.game_state.board[rank][file] = board[rank][file].map(|(piece_type, color)| {
+                    Piece::new(piece_type, color)
+                });
+            }
+        }
+
+        // Update other game state
+        self.game_state.current_turn = current_turn;
+        self.game_state.promotion_pending = promotion_pending.map(|(rank, file, color)| 
+            PromotionState {
+                position: (rank, file),
+                color,
+            }
+        );
+        self.game_over = game_over;
+
+        // Clear selection and possible moves
+        self.selected_square = None;
+        self.possible_moves.clear();
+        self.needs_redraw = true;
+
+        Ok(())
     }
     
     pub fn draw(&mut self, ctx: &mut Context) -> GameResult<()> {
@@ -342,111 +413,79 @@ impl ChessGui {
         Ok(())
     }
     
-    pub fn handle_mouse_down(&mut self, button: MouseButton, x: f32, y: f32) -> GameResult<()> {
-        if button == MouseButton::Left {
-            let point = Point2 { x, y };
-            
-            if self.restart_button.contains(point) {
+    pub fn handle_mouse_down(&mut self, button: MouseButton, x: f32, y: f32) -> GameResult<Option<MoveInfo>> {
+        if button != MouseButton::Left {
+            return Ok(None);
+        }
+
+        if self.game_over {
+            if self.restart_button.contains(Point2 { x, y }) {
                 self.game_state = GameState::new();
                 self.selected_square = None;
                 self.possible_moves.clear();
                 self.game_over = false;
                 self.needs_redraw = true;
-                return Ok(());
             }
-            
-            if let Some(ref promotion) = self.game_state.promotion_pending {
-                let (rank, file) = promotion.position;
-                
-                let square_x = BOARD_OFFSET_X + (file as f32) * SQUARE_SIZE;
-                let square_y = BOARD_OFFSET_Y + (rank as f32) * SQUARE_SIZE;
-                
-                let dialog_width = SQUARE_SIZE;
-                let dialog_height = SQUARE_SIZE * 4.0; // Space for 4 pieces
-                
-                let dialog_y = if rank < 4 {
-                    square_y // Dialog extends downward
-                } else {
-                    square_y - dialog_height + SQUARE_SIZE // Dialog extends upward
-                };
-                
-                if x >= square_x && x < square_x + dialog_width && 
-                   y >= dialog_y && y < dialog_y + dialog_height {
-                    
-                    let relative_y = y - dialog_y;
-                    let piece_index = (relative_y / SQUARE_SIZE) as usize;
-                    
-                    if piece_index < 4 {
-                        let promotion_pieces = [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight];
-                        let selected_piece = promotion_pieces[piece_index];
-                        
-                        self.game_state.promote_pawn(selected_piece);
-                        
-                        self.check_game_end();
-                        
-                        self.needs_redraw = true;
-                        return Ok(());
-                    }
-                }
-                
-                return Ok(());
-            }
-            
-            if self.game_over {
-                return Ok(());
-            }
-            
-            if x >= BOARD_OFFSET_X && y >= BOARD_OFFSET_Y {
-                let file = ((x - BOARD_OFFSET_X) / SQUARE_SIZE) as usize;
-                let rank = ((y - BOARD_OFFSET_Y) / SQUARE_SIZE) as usize;
-                
-                if file < BOARD_SIZE && rank < BOARD_SIZE {
-                    if let Some(selected) = self.selected_square {
-                        if self.possible_moves.contains(&(rank, file)) {
-                            if self.game_state.make_move(selected, (rank, file)) {
-                                self.selected_square = None;
-                                self.possible_moves.clear();
-                                
-                                self.check_game_end();
-                                
-                                self.needs_redraw = true;
-                                return Ok(());
-                            }
-                        }
-                        
-                        if selected == (rank, file) {
-                            self.selected_square = None;
-                            self.possible_moves.clear();
-                            self.needs_redraw = true;
-                            return Ok(());
-                        }
-                    }
-                    
-                    if let Some(piece) = self.game_state.board[rank][file] {
-                        if piece.color == self.game_state.current_turn {
-                            self.selected_square = Some((rank, file));
-                            self.possible_moves = piece.get_possible_moves((rank, file), &self.game_state.board);
-                            
-                            self.possible_moves.retain(|&to_pos| {
-                                let from_pos = self.selected_square.unwrap();
-                                !self.game_state.would_be_in_check_after_move(from_pos, to_pos)
-                            });
-                            
-                            self.needs_redraw = true;
-                            return Ok(());
-                        }
-                    }
-                    
-                    if self.selected_square.is_some() {
-                        self.selected_square = None;
-                        self.possible_moves.clear();
-                        self.needs_redraw = true;
-                    }
+            return Ok(None);
+        }
+
+        if self.game_state.promotion_pending.is_some() {
+            self.handle_promotion_selection(x, y)?;
+            return Ok(None);
+        }
+
+        if self.is_network_game {
+            if let Some(player_color) = self.player_color {
+                if player_color != self.game_state.current_turn {
+                    return Ok(None);
                 }
             }
         }
+
+        let (rank, file) = self.get_square_from_coords(x, y);
         
-        Ok(())
+        if let Some(selected) = self.selected_square {
+            if self.possible_moves.contains(&(rank, file)) {
+                let from = (selected.0 as u8, selected.1 as u8);
+                let to = (rank as u8, file as u8);
+                
+                if self.game_state.make_move(selected, (rank, file)) {
+                    self.selected_square = None;
+                    self.possible_moves.clear();
+                    self.needs_redraw = true;
+                    
+                    if self.game_state.promotion_pending.is_some() {
+                        return Ok(Some(MoveInfo { from, to, promotion: None }));
+                    }
+                    
+                    return Ok(Some(MoveInfo { from, to, promotion: None }));
+                }
+            }
+            self.selected_square = None;
+            self.possible_moves.clear();
+        }
+
+        if let Some(piece) = self.game_state.board[rank][file] {
+            if self.is_network_game {
+                if let Some(player_color) = self.player_color {
+                    if piece.color != player_color {
+                        return Ok(None);
+                    }
+                }
+            }
+            
+            if piece.color == self.game_state.current_turn {
+                self.selected_square = Some((rank, file));
+                self.possible_moves = self.game_state.get_all_legal_moves()
+                    .iter()
+                    .filter(|&&(from, _)| from == (rank, file))
+                    .map(|&(_, to)| to)
+                    .collect();
+            }
+        }
+
+        self.needs_redraw = true;
+        Ok(None)
     }
     
     pub fn handle_mouse_move(&mut self, x: f32, y: f32) -> GameResult<()> {
@@ -475,5 +514,48 @@ impl ChessGui {
             self.game_over = true;
             self.needs_redraw = true;
         }
+    }
+
+    fn handle_promotion_selection(&mut self, x: f32, y: f32) -> GameResult<()> {
+        if let Some(ref promotion) = self.game_state.promotion_pending {
+            let (rank, file) = promotion.position;
+            
+            let square_x = BOARD_OFFSET_X + (file as f32) * SQUARE_SIZE;
+            let square_y = BOARD_OFFSET_Y + (rank as f32) * SQUARE_SIZE;
+            
+            let dialog_width = SQUARE_SIZE;
+            let dialog_height = SQUARE_SIZE * 4.0;
+            
+            let dialog_y = if rank < 4 {
+                square_y
+            } else {
+                square_y - dialog_height + SQUARE_SIZE
+            };
+            
+            if x >= square_x && x < square_x + dialog_width && 
+               y >= dialog_y && y < dialog_y + dialog_height {
+                
+                let relative_y = y - dialog_y;
+                let piece_index = (relative_y / SQUARE_SIZE) as usize;
+                
+                if piece_index < 4 {
+                    let promotion_pieces = [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight];
+                    let selected_piece = promotion_pieces[piece_index];
+                    
+                    self.game_state.promote_pawn(selected_piece);
+                    
+                    self.check_game_end();
+                    
+                    self.needs_redraw = true;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn get_square_from_coords(&self, x: f32, y: f32) -> (usize, usize) {
+        let file = ((x - BOARD_OFFSET_X) / SQUARE_SIZE) as usize;
+        let rank = ((y - BOARD_OFFSET_Y) / SQUARE_SIZE) as usize;
+        (rank, file)
     }
 } 
