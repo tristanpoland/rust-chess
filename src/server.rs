@@ -88,29 +88,44 @@ impl ChessServer {
                                 'R' => PieceType::Rook,
                                 'B' => PieceType::Bishop,
                                 'N' => PieceType::Knight,
-                                _ => continue,
+                                _ => {
+                                    println!("Invalid promotion piece: {}", promotion);
+                                    continue;
+                                },
                             };
-                            self.game_state.promote_pawn(piece_type);
+                            if !self.game_state.promote_pawn(piece_type) {
+                                println!("Failed to promote pawn");
+                                continue;
+                            }
                         }
 
                         // Switch turns
                         current_turn = !current_turn;
 
                         // Broadcast updated game state to both clients
-                        self.broadcast_game_state(&mut client1, &mut client2)?;
+                        if let Err(e) = self.broadcast_game_state(&mut client1, &mut client2) {
+                            println!("Error broadcasting game state: {}", e);
+                            break;
+                        }
                     }
                 }
                 Ok(Some(NetworkMessage::GameStart { .. })) => {
                     // Ignore GameStart messages after initial setup
+                    println!("Received unexpected GameStart message");
                 }
                 Ok(Some(NetworkMessage::GameState { .. })) => {
                     // Ignore GameState messages from clients
+                    println!("Received unexpected GameState message");
                 }
                 Ok(Some(NetworkMessage::GameEnd { reason })) => {
                     // Forward game end to both players
                     let end_message = NetworkMessage::GameEnd { reason: reason.clone() };
-                    client1.stream.write_all(serde_json::to_string(&end_message)?.as_bytes())?;
-                    client2.stream.write_all(serde_json::to_string(&end_message)?.as_bytes())?;
+                    if let Err(e) = client1.stream.write_all(serde_json::to_string(&end_message)?.as_bytes()) {
+                        println!("Error sending game end to client 1: {}", e);
+                    }
+                    if let Err(e) = client2.stream.write_all(serde_json::to_string(&end_message)?.as_bytes()) {
+                        println!("Error sending game end to client 2: {}", e);
+                    }
                     break;
                 }
                 Ok(None) => {
@@ -118,8 +133,38 @@ impl ChessServer {
                 }
                 Err(e) => {
                     println!("Error receiving message: {}", e);
-                    break;
+                    if e.kind() == std::io::ErrorKind::ConnectionAborted || 
+                       e.kind() == std::io::ErrorKind::ConnectionReset {
+                        println!("Client disconnected");
+                        break;
+                    }
                 }
+            }
+
+            // Check if game is over
+            if self.game_state.is_game_over() {
+                let reason = if self.game_state.is_checkmate() {
+                    "Checkmate"
+                } else if self.game_state.is_stalemate() {
+                    "Stalemate"
+                } else if self.game_state.is_threefold_repetition() {
+                    "Threefold repetition"
+                } else if self.game_state.is_fifty_move_rule() {
+                    "Fifty-move rule"
+                } else if self.game_state.is_insufficient_material() {
+                    "Insufficient material"
+                } else {
+                    "Unknown"
+                };
+                
+                let end_message = NetworkMessage::GameEnd { reason: reason.to_string() };
+                if let Err(e) = client1.stream.write_all(serde_json::to_string(&end_message)?.as_bytes()) {
+                    println!("Error sending game end to client 1: {}", e);
+                }
+                if let Err(e) = client2.stream.write_all(serde_json::to_string(&end_message)?.as_bytes()) {
+                    println!("Error sending game end to client 2: {}", e);
+                }
+                break;
             }
         }
 

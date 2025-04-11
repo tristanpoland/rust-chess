@@ -74,11 +74,30 @@ impl ChessClient {
         }
 
         // Try to parse a complete message
-        if let Ok(message) = serde_json::from_slice::<NetworkMessage>(&self.buffer) {
-            self.buffer.clear();
-            Ok(Some(message))
-        } else {
-            Ok(None)
+        match serde_json::from_slice::<NetworkMessage>(&self.buffer) {
+            Ok(message) => {
+                // Find the end of the JSON message
+                if let Some(pos) = self.buffer.iter().position(|&b| b == b'}') {
+                    // Remove the processed message from the buffer
+                    self.buffer.drain(..=pos);
+                    Ok(Some(message))
+                } else {
+                    // Incomplete message, keep waiting
+                    Ok(None)
+                }
+            }
+            Err(e) if e.is_eof() => {
+                // Incomplete message, keep waiting
+                Ok(None)
+            }
+            Err(e) => {
+                // Invalid message, clear buffer and return error
+                self.buffer.clear();
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to parse message: {}", e)
+                ))
+            }
         }
     }
 

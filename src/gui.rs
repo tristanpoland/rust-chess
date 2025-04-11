@@ -95,7 +95,6 @@ pub struct ChessGui {
     selected_square: Option<(usize, usize)>,
     possible_moves: Vec<(usize, usize)>,
     assets: Assets,
-    restart_button: Button,
     show_square_coordinates: bool,
     game_over: bool,
     needs_redraw: bool,
@@ -108,26 +107,11 @@ impl ChessGui {
         let game_state = GameState::new();
         let assets = Assets::new(ctx)?;
         
-        let board_bottom = BOARD_OFFSET_Y + (BOARD_SIZE as f32 * SQUARE_SIZE);
-        let button_y = board_bottom + 120.0;
-        
-        let board_width = BOARD_SIZE as f32 * SQUARE_SIZE;
-        let center_x = BOARD_OFFSET_X + (board_width / 2.0) - (BUTTON_WIDTH / 2.0);
-        
-        let restart_button = Button::new(
-            center_x, 
-            button_y, 
-            BUTTON_WIDTH, 
-            BUTTON_HEIGHT, 
-            "New Game"
-        );
-        
         Ok(Self {
             game_state,
             selected_square: None,
             possible_moves: Vec::new(),
             assets,
-            restart_button,
             show_square_coordinates: true,
             game_over: false,
             needs_redraw: true,
@@ -210,8 +194,6 @@ impl ChessGui {
         self.draw_pieces(&mut canvas);
         
         self.draw_status(&mut canvas)?;
-        
-        self.restart_button.draw(ctx, &mut canvas)?;
         
         if self.game_state.promotion_pending.is_some() {
             self.draw_promotion_dialog(ctx, &mut canvas)?;
@@ -419,13 +401,6 @@ impl ChessGui {
         }
 
         if self.game_over {
-            if self.restart_button.contains(Point2 { x, y }) {
-                self.game_state = GameState::new();
-                self.selected_square = None;
-                self.possible_moves.clear();
-                self.game_over = false;
-                self.needs_redraw = true;
-            }
             return Ok(None);
         }
 
@@ -489,16 +464,6 @@ impl ChessGui {
     }
     
     pub fn handle_mouse_move(&mut self, x: f32, y: f32) -> GameResult<()> {
-        let point = Point2 { x, y };
-        
-        let hover_changed = 
-            self.restart_button.hovered != self.restart_button.contains(point);
-        
-        if hover_changed {
-            self.restart_button.set_hover(self.restart_button.contains(point));
-            self.needs_redraw = true;
-        }
-        
         Ok(())
     }
     

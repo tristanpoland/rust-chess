@@ -99,14 +99,9 @@ fn main() -> GameResult {
 
     if is_server {
         println!("Starting server mode...");
-        let server = chess::network::ChessServer::new(8080)?;
-        let (mut client1, mut client2) = server.accept_connections()?;
-        
-        // Server logic would go here
-        // For now, we'll just keep the connection alive
-        loop {
-            thread::sleep(std::time::Duration::from_millis(100));
-        }
+        let mut server = chess::server::ChessServer::new(8080)?;
+        server.run()?;
+        Ok(())
     } else {
         let resource_dir = std::path::PathBuf::from("./assets");
         
