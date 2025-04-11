@@ -209,8 +209,11 @@ impl ChessGui {
     fn draw_board(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult<()> {
         for rank in 0..BOARD_SIZE {
             for file in 0..BOARD_SIZE {
-                let x = BOARD_OFFSET_X + (file as f32) * SQUARE_SIZE;
-                let y = BOARD_OFFSET_Y + (rank as f32) * SQUARE_SIZE;
+                // Invert coordinates if playing as black
+                let (display_rank, display_file) = self.get_display_coordinates(rank, file);
+                
+                let x = BOARD_OFFSET_X + (display_file as f32) * SQUARE_SIZE;
+                let y = BOARD_OFFSET_Y + (display_rank as f32) * SQUARE_SIZE;
                 
                 let is_light = (rank + file) % 2 == 0;
                 let color = if is_light { LIGHT_SQUARE } else { DARK_SQUARE };
@@ -275,8 +278,11 @@ impl ChessGui {
         for rank in 0..BOARD_SIZE {
             for file in 0..BOARD_SIZE {
                 if let Some(piece) = self.game_state.board[rank][file] {
-                    let x = BOARD_OFFSET_X + (file as f32) * SQUARE_SIZE;
-                    let y = BOARD_OFFSET_Y + (rank as f32) * SQUARE_SIZE;
+                    // Invert coordinates if playing as black
+                    let (display_rank, display_file) = self.get_display_coordinates(rank, file);
+                    
+                    let x = BOARD_OFFSET_X + (display_file as f32) * SQUARE_SIZE;
+                    let y = BOARD_OFFSET_Y + (display_rank as f32) * SQUARE_SIZE;
                     
                     let dest = Point2 { 
                         x: x + SQUARE_SIZE / 2.0, 
@@ -350,16 +356,28 @@ impl ChessGui {
             let (rank, file) = promotion.position;
             let color = promotion.color;
             
-            let square_x = BOARD_OFFSET_X + (file as f32) * SQUARE_SIZE;
-            let square_y = BOARD_OFFSET_Y + (rank as f32) * SQUARE_SIZE;
+            // Invert coordinates if playing as black
+            let (display_rank, display_file) = self.get_display_coordinates(rank, file);
+            
+            let square_x = BOARD_OFFSET_X + (display_file as f32) * SQUARE_SIZE;
+            let square_y = BOARD_OFFSET_Y + (display_rank as f32) * SQUARE_SIZE;
             
             let dialog_width = SQUARE_SIZE;
             let dialog_height = SQUARE_SIZE * 4.0; // Space for 4 pieces
             
-            let dialog_y = if rank < 4 {
-                square_y // Dialog extends downward
+            // Adjust dialog position based on perspective
+            let dialog_y = if self.is_inverted_board() {
+                if rank > 3 {
+                    square_y // Dialog extends downward
+                } else {
+                    square_y - dialog_height + SQUARE_SIZE // Dialog extends upward
+                }
             } else {
-                square_y - dialog_height + SQUARE_SIZE // Dialog extends upward
+                if rank < 4 {
+                    square_y // Dialog extends downward
+                } else {
+                    square_y - dialog_height + SQUARE_SIZE // Dialog extends upward
+                }
             };
             
             let dialog_rect = Rect::new(square_x, dialog_y, dialog_width, dialog_height);
@@ -485,16 +503,28 @@ impl ChessGui {
         if let Some(ref promotion) = self.game_state.promotion_pending {
             let (rank, file) = promotion.position;
             
-            let square_x = BOARD_OFFSET_X + (file as f32) * SQUARE_SIZE;
-            let square_y = BOARD_OFFSET_Y + (rank as f32) * SQUARE_SIZE;
+            // Invert coordinates if playing as black
+            let (display_rank, display_file) = self.get_display_coordinates(rank, file);
+            
+            let square_x = BOARD_OFFSET_X + (display_file as f32) * SQUARE_SIZE;
+            let square_y = BOARD_OFFSET_Y + (display_rank as f32) * SQUARE_SIZE;
             
             let dialog_width = SQUARE_SIZE;
             let dialog_height = SQUARE_SIZE * 4.0;
             
-            let dialog_y = if rank < 4 {
-                square_y
+            // Adjust dialog position based on perspective
+            let dialog_y = if self.is_inverted_board() {
+                if rank > 3 {
+                    square_y // Dialog extends downward
+                } else {
+                    square_y - dialog_height + SQUARE_SIZE // Dialog extends upward
+                }
             } else {
-                square_y - dialog_height + SQUARE_SIZE
+                if rank < 4 {
+                    square_y // Dialog extends downward
+                } else {
+                    square_y - dialog_height + SQUARE_SIZE // Dialog extends upward
+                }
             };
             
             if x >= square_x && x < square_x + dialog_width && 
@@ -519,8 +549,37 @@ impl ChessGui {
     }
 
     fn get_square_from_coords(&self, x: f32, y: f32) -> (usize, usize) {
-        let file = ((x - BOARD_OFFSET_X) / SQUARE_SIZE) as usize;
-        let rank = ((y - BOARD_OFFSET_Y) / SQUARE_SIZE) as usize;
-        (rank, file)
+        let display_file = ((x - BOARD_OFFSET_X) / SQUARE_SIZE) as usize;
+        let display_rank = ((y - BOARD_OFFSET_Y) / SQUARE_SIZE) as usize;
+        
+        // Convert display coordinates to internal coordinates
+        self.get_internal_coordinates(display_rank, display_file)
+    }
+    
+    // Helper method to check if board should be inverted
+    fn is_inverted_board(&self) -> bool {
+        matches!(self.player_color, Some(Color::Black))
+    }
+    
+    // Convert internal coordinates to display coordinates based on perspective
+    fn get_display_coordinates(&self, rank: usize, file: usize) -> (usize, usize) {
+        if self.is_inverted_board() {
+            // For black perspective: flip both rank and file
+            (7 - rank, 7 - file) 
+        } else {
+            // For white perspective: use coordinates as-is
+            (rank, file)
+        }
+    }
+    
+    // Convert display coordinates to internal coordinates based on perspective
+    fn get_internal_coordinates(&self, display_rank: usize, display_file: usize) -> (usize, usize) {
+        if self.is_inverted_board() {
+            // For black perspective: flip both rank and file
+            (7 - display_rank, 7 - display_file)
+        } else {
+            // For white perspective: use coordinates as-is
+            (display_rank, display_file)
+        }
     }
 } 
