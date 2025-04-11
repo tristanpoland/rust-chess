@@ -20,10 +20,19 @@ const POSSIBLE_MOVE: GgezColor = GgezColor::new(0.7, 0.7, 0.9, 0.7);
 const PROMOTION_BG: GgezColor = GgezColor::new(0.3, 0.3, 0.3, 0.9);
 const BUTTON_BG: GgezColor = GgezColor::new(0.3, 0.3, 0.6, 1.0);
 const BUTTON_HOVER: GgezColor = GgezColor::new(0.4, 0.4, 0.7, 1.0);
+const DIALOG_BG: GgezColor = GgezColor::new(0.2, 0.2, 0.2, 0.9);
+const ACCEPT_BUTTON_BG: GgezColor = GgezColor::new(0.3, 0.6, 0.3, 1.0);
+const ACCEPT_BUTTON_HOVER: GgezColor = GgezColor::new(0.4, 0.7, 0.4, 1.0);
+const DECLINE_BUTTON_BG: GgezColor = GgezColor::new(0.6, 0.3, 0.3, 1.0);
+const DECLINE_BUTTON_HOVER: GgezColor = GgezColor::new(0.7, 0.4, 0.4, 1.0);
 
 const BUTTON_WIDTH: f32 = 120.0;
 const BUTTON_HEIGHT: f32 = 30.0;
 const BUTTON_MARGIN: f32 = 20.0;
+const DIALOG_WIDTH: f32 = 300.0;
+const DIALOG_HEIGHT: f32 = 150.0;
+const DIALOG_BUTTON_WIDTH: f32 = 100.0;
+const DIALOG_BUTTON_HEIGHT: f32 = 30.0;
 
 pub struct Button {
     rect: Rect,
@@ -111,6 +120,13 @@ pub struct ChessGui {
     create_game_button: Button,
     refresh_games_button: Button,
     join_game_buttons: Vec<Button>,
+    // Game action buttons
+    offer_draw_button: Button,
+    resign_button: Button,
+    rematch_button: Button,
+    // Dialog state
+    draw_offered: bool,
+    rematch_offered: bool,
     // Button state
     server_address: String,
     show_game_list: bool,
@@ -147,6 +163,31 @@ impl ChessGui {
             "Refresh Games"
         );
         
+        // Create game action buttons
+        let offer_draw_button = Button::new(
+            BOARD_OFFSET_X,
+            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + 80.0,
+            BUTTON_WIDTH,
+            BUTTON_HEIGHT,
+            "Offer Draw"
+        );
+        
+        let resign_button = Button::new(
+            BOARD_OFFSET_X + BUTTON_WIDTH + BUTTON_MARGIN,
+            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + 80.0,
+            BUTTON_WIDTH,
+            BUTTON_HEIGHT,
+            "Resign"
+        );
+        
+        let rematch_button = Button::new(
+            BOARD_OFFSET_X + 2.0 * (BUTTON_WIDTH + BUTTON_MARGIN),
+            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + 80.0,
+            BUTTON_WIDTH,
+            BUTTON_HEIGHT,
+            "Rematch"
+        );
+        
         Ok(Self {
             game_state,
             selected_square: None,
@@ -165,6 +206,11 @@ impl ChessGui {
             create_game_button,
             refresh_games_button,
             join_game_buttons: Vec::new(),
+            offer_draw_button,
+            resign_button,
+            rematch_button,
+            draw_offered: false,
+            rematch_offered: false,
             server_address: "localhost:8080".to_string(),
             show_game_list: false,
             hovered_button: None,
@@ -310,6 +356,28 @@ impl ChessGui {
                             })
                             .color(GgezColor::WHITE)
                     );
+                }
+            }
+            
+            // Draw game action buttons when appropriate
+            if self.is_network_game {
+                if !self.game_over {
+                    // During active game, show draw offer and resign buttons
+                    self.offer_draw_button.draw(ctx, &mut canvas)?;
+                    self.resign_button.draw(ctx, &mut canvas)?;
+                } else {
+                    // When game is over, show rematch button
+                    self.rematch_button.draw(ctx, &mut canvas)?;
+                }
+                
+                // If a draw has been offered to us, show dialog
+                if self.draw_offered && !self.game_over {
+                    self.draw_draw_offer_dialog(ctx, &mut canvas)?;
+                }
+                
+                // If a rematch has been offered to us, show dialog
+                if self.rematch_offered && self.game_over {
+                    self.draw_rematch_offer_dialog(ctx, &mut canvas)?;
                 }
             }
         }
@@ -532,14 +600,263 @@ impl ChessGui {
         Ok(())
     }
     
+    fn draw_draw_offer_dialog(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult<()> {
+        // Create a semi-transparent background for the dialog
+        let window_width = ctx.gfx.size().0;
+        let window_height = ctx.gfx.size().1;
+        
+        let dialog_x = (window_width - DIALOG_WIDTH) / 2.0;
+        let dialog_y = (window_height - DIALOG_HEIGHT) / 2.0;
+        
+        let dialog_rect = Rect::new(dialog_x, dialog_y, DIALOG_WIDTH, DIALOG_HEIGHT);
+        let dialog_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            dialog_rect,
+            DIALOG_BG,
+        )?;
+        canvas.draw(&dialog_mesh, DrawParam::default());
+        
+        // Draw dialog border
+        let border_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(2.0),
+            dialog_rect,
+            GgezColor::WHITE,
+        )?;
+        canvas.draw(&border_mesh, DrawParam::default());
+        
+        // Draw dialog message
+        let message_text = Text::new("Your opponent has offered a draw");
+        canvas.draw(
+            &message_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: dialog_x + DIALOG_WIDTH / 2.0,
+                    y: dialog_y + 40.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        // Draw accept button
+        let accept_rect = Rect::new(
+            dialog_x + DIALOG_WIDTH / 2.0 - DIALOG_BUTTON_WIDTH - 10.0,
+            dialog_y + DIALOG_HEIGHT - 50.0,
+            DIALOG_BUTTON_WIDTH,
+            DIALOG_BUTTON_HEIGHT
+        );
+        
+        let accept_color = ACCEPT_BUTTON_BG; // Could add hover effect here
+        
+        let accept_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            accept_rect,
+            accept_color,
+        )?;
+        canvas.draw(&accept_mesh, DrawParam::default());
+        
+        let accept_border = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(2.0),
+            accept_rect,
+            GgezColor::WHITE,
+        )?;
+        canvas.draw(&accept_border, DrawParam::default());
+        
+        let accept_text = Text::new("Accept");
+        canvas.draw(
+            &accept_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: accept_rect.x + accept_rect.w / 2.0,
+                    y: accept_rect.y + accept_rect.h / 2.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        // Draw decline button
+        let decline_rect = Rect::new(
+            dialog_x + DIALOG_WIDTH / 2.0 + 10.0,
+            dialog_y + DIALOG_HEIGHT - 50.0,
+            DIALOG_BUTTON_WIDTH,
+            DIALOG_BUTTON_HEIGHT
+        );
+        
+        let decline_color = DECLINE_BUTTON_BG; // Could add hover effect here
+        
+        let decline_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            decline_rect,
+            decline_color,
+        )?;
+        canvas.draw(&decline_mesh, DrawParam::default());
+        
+        let decline_border = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(2.0),
+            decline_rect,
+            GgezColor::WHITE,
+        )?;
+        canvas.draw(&decline_border, DrawParam::default());
+        
+        let decline_text = Text::new("Decline");
+        canvas.draw(
+            &decline_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: decline_rect.x + decline_rect.w / 2.0,
+                    y: decline_rect.y + decline_rect.h / 2.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        Ok(())
+    }
+    
+    fn draw_rematch_offer_dialog(&self, ctx: &mut Context, canvas: &mut Canvas) -> GameResult<()> {
+        // Create a semi-transparent background for the dialog
+        let window_width = ctx.gfx.size().0;
+        let window_height = ctx.gfx.size().1;
+        
+        let dialog_x = (window_width - DIALOG_WIDTH) / 2.0;
+        let dialog_y = (window_height - DIALOG_HEIGHT) / 2.0;
+        
+        let dialog_rect = Rect::new(dialog_x, dialog_y, DIALOG_WIDTH, DIALOG_HEIGHT);
+        let dialog_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            dialog_rect,
+            DIALOG_BG,
+        )?;
+        canvas.draw(&dialog_mesh, DrawParam::default());
+        
+        // Draw dialog border
+        let border_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(2.0),
+            dialog_rect,
+            GgezColor::WHITE,
+        )?;
+        canvas.draw(&border_mesh, DrawParam::default());
+        
+        // Draw dialog message
+        let message_text = Text::new("Your opponent wants to play again");
+        canvas.draw(
+            &message_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: dialog_x + DIALOG_WIDTH / 2.0,
+                    y: dialog_y + 40.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        // Draw accept button
+        let accept_rect = Rect::new(
+            dialog_x + DIALOG_WIDTH / 2.0 - DIALOG_BUTTON_WIDTH - 10.0,
+            dialog_y + DIALOG_HEIGHT - 50.0,
+            DIALOG_BUTTON_WIDTH,
+            DIALOG_BUTTON_HEIGHT
+        );
+        
+        let accept_color = ACCEPT_BUTTON_BG; // Could add hover effect here
+        
+        let accept_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            accept_rect,
+            accept_color,
+        )?;
+        canvas.draw(&accept_mesh, DrawParam::default());
+        
+        let accept_border = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(2.0),
+            accept_rect,
+            GgezColor::WHITE,
+        )?;
+        canvas.draw(&accept_border, DrawParam::default());
+        
+        let accept_text = Text::new("Play Again");
+        canvas.draw(
+            &accept_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: accept_rect.x + accept_rect.w / 2.0,
+                    y: accept_rect.y + accept_rect.h / 2.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        // Draw decline button
+        let decline_rect = Rect::new(
+            dialog_x + DIALOG_WIDTH / 2.0 + 10.0,
+            dialog_y + DIALOG_HEIGHT - 50.0,
+            DIALOG_BUTTON_WIDTH,
+            DIALOG_BUTTON_HEIGHT
+        );
+        
+        let decline_color = DECLINE_BUTTON_BG; // Could add hover effect here
+        
+        let decline_mesh = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            decline_rect,
+            decline_color,
+        )?;
+        canvas.draw(&decline_mesh, DrawParam::default());
+        
+        let decline_border = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::stroke(2.0),
+            decline_rect,
+            GgezColor::WHITE,
+        )?;
+        canvas.draw(&decline_border, DrawParam::default());
+        
+        let decline_text = Text::new("No Thanks");
+        canvas.draw(
+            &decline_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: decline_rect.x + decline_rect.w / 2.0,
+                    y: decline_rect.y + decline_rect.h / 2.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        Ok(())
+    }
+    
     pub fn handle_mouse_down(&mut self, button: MouseButton, x: f32, y: f32) -> GameResult<Option<MoveInfo>> {
         if button != MouseButton::Left {
             return Ok(None);
         }
         
-        // Check if a network button was clicked
         let point = Point2 { x, y };
         
+        // Check for dialog button clicks first
+        if self.draw_offered && !self.game_over {
+            if self.handle_dialog_click(x, y, true)? {
+                return Ok(None);
+            }
+        }
+        
+        if self.rematch_offered && self.game_over {
+            if self.handle_dialog_click(x, y, false)? {
+                return Ok(None);
+            }
+        }
+        
+        // Check if a network button was clicked
         if self.connect_button.contains(point) {
             // Attempt to connect to server
             if self.network_client.is_none() {
@@ -557,6 +874,36 @@ impl ChessGui {
                 }
                 self.needs_redraw = true;
                 return Ok(None);
+            }
+        }
+        
+        // Check for game action buttons
+        if self.is_network_game && self.network_client.is_some() {
+            // Check game action buttons when in a network game
+            if !self.game_over {
+                if self.offer_draw_button.contains(point) {
+                    if let Err(e) = self.offer_draw() {
+                        println!("Error offering draw: {}", e);
+                    }
+                    self.needs_redraw = true;
+                    return Ok(None);
+                }
+                
+                if self.resign_button.contains(point) {
+                    if let Err(e) = self.resign() {
+                        println!("Error resigning: {}", e);
+                    }
+                    self.needs_redraw = true;
+                    return Ok(None);
+                }
+            } else {
+                if self.rematch_button.contains(point) {
+                    if let Err(e) = self.request_rematch() {
+                        println!("Error requesting rematch: {}", e);
+                    }
+                    self.needs_redraw = true;
+                    return Ok(None);
+                }
             }
         }
         
@@ -664,6 +1011,81 @@ impl ChessGui {
 
         self.needs_redraw = true;
         Ok(None)
+    }
+    
+    fn handle_dialog_click(&mut self, x: f32, y: f32, is_draw_dialog: bool) -> GameResult<bool> {
+        // Get window dimensions from context size
+        let window_width = 780.0; // Default window width from main.rs
+        let window_height = 750.0; // Default window height from main.rs
+        
+        let dialog_x = (window_width - DIALOG_WIDTH) / 2.0;
+        let dialog_y = (window_height - DIALOG_HEIGHT) / 2.0;
+        
+        // Check for accept button click
+        let accept_rect = Rect::new(
+            dialog_x + DIALOG_WIDTH / 2.0 - DIALOG_BUTTON_WIDTH - 10.0,
+            dialog_y + DIALOG_HEIGHT - 50.0,
+            DIALOG_BUTTON_WIDTH,
+            DIALOG_BUTTON_HEIGHT
+        );
+        
+        if x >= accept_rect.x && x < accept_rect.x + accept_rect.w && 
+           y >= accept_rect.y && y < accept_rect.y + accept_rect.h {
+            if is_draw_dialog {
+                // Accept draw offer
+                if let Some(client) = &mut self.network_client {
+                    if let Err(e) = client.accept_draw() {
+                        println!("Error accepting draw: {}", e);
+                    }
+                }
+                self.draw_offered = false;
+                self.game_over = true;
+            } else {
+                // Accept rematch offer
+                if let Some(client) = &mut self.network_client {
+                    if let Err(e) = client.accept_draw() { // Reusing accept_draw for now, ideally should be its own method
+                        println!("Error accepting rematch: {}", e);
+                    }
+                }
+                self.rematch_offered = false;
+                // The server will send us a new game state
+            }
+            self.needs_redraw = true;
+            return Ok(true);
+        }
+        
+        // Check for decline button click
+        let decline_rect = Rect::new(
+            dialog_x + DIALOG_WIDTH / 2.0 + 10.0,
+            dialog_y + DIALOG_HEIGHT - 50.0,
+            DIALOG_BUTTON_WIDTH,
+            DIALOG_BUTTON_HEIGHT
+        );
+        
+        if x >= decline_rect.x && x < decline_rect.x + decline_rect.w && 
+           y >= decline_rect.y && y < decline_rect.y + decline_rect.h {
+            if is_draw_dialog {
+                // Decline draw offer
+                if let Some(client) = &mut self.network_client {
+                    if let Err(e) = client.decline_draw() {
+                        println!("Error declining draw: {}", e);
+                    }
+                }
+                self.draw_offered = false;
+            } else {
+                // Decline rematch offer
+                if let Some(client) = &mut self.network_client {
+                    if let Err(e) = client.decline_draw() { // Reusing decline_draw for now
+                        println!("Error declining rematch: {}", e);
+                    }
+                }
+                self.rematch_offered = false;
+            }
+            self.needs_redraw = true;
+            return Ok(true);
+        }
+        
+        Ok(false)
     }
     
     pub fn handle_mouse_move(&mut self, x: f32, y: f32) -> GameResult<()> {
@@ -908,6 +1330,7 @@ impl ChessGui {
                 Ok(Some(NetworkMessage::GameEnd { reason })) => {
                     println!("Game ended: {}", reason);
                     self.game_over = true;
+                    self.needs_redraw = true;
                 }
                 Ok(Some(NetworkMessage::GameCreated { game_id })) => {
                     self.game_id = Some(game_id.clone());
@@ -924,6 +1347,37 @@ impl ChessGui {
                     self.update_join_game_buttons();
                     self.needs_redraw = true;
                 }
+                Ok(Some(NetworkMessage::DrawOffered)) => {
+                    println!("Your opponent has offered a draw");
+                    self.draw_offered = true;
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::AcceptDraw)) => {
+                    println!("Your opponent has accepted your draw offer");
+                    self.game_over = true;
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::DeclineDraw)) => {
+                    println!("Your opponent has declined your draw offer");
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::Resign)) => {
+                    println!("Your opponent has resigned");
+                    self.game_over = true;
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::RequestRematch)) => {
+                    println!("Your opponent wants to play again");
+                    self.rematch_offered = true;
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::RematchAccepted { is_white })) => {
+                    println!("Rematch accepted! You are playing as {}", if is_white { "white" } else { "black" });
+                    // The server will send a new GameState message to set up the board
+                    self.game_over = false;
+                    self.set_player_color(is_white);
+                    self.needs_redraw = true;
+                }
                 Ok(Some(NetworkMessage::CreateGame { .. })) => {
                     // Ignore unexpected CreateGame messages from server
                     println!("Received unexpected CreateGame message");
@@ -935,6 +1389,10 @@ impl ChessGui {
                 Ok(Some(NetworkMessage::RequestGameList)) => {
                     // Ignore unexpected RequestGameList messages from server
                     println!("Received unexpected RequestGameList message");
+                }
+                Ok(Some(NetworkMessage::OfferDraw)) => {
+                    // Ignore unexpected OfferDraw messages from server - should receive DrawOffered instead
+                    println!("Received unexpected direct OfferDraw message");
                 }
                 Ok(None) => {
                     // No message received, continue
@@ -988,5 +1446,48 @@ impl ChessGui {
     
     pub fn get_server_address(&self) -> &str {
         &self.server_address
+    }
+
+    pub fn offer_draw(&mut self) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            if !client.is_connected() {
+                println!("Cannot offer draw - not connected to server");
+                return Ok(());
+            }
+            if let Err(e) = client.offer_draw() {
+                println!("Error offering draw: {}", e);
+            }
+        }
+        Ok(())
+    }
+    
+    pub fn resign(&mut self) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            if !client.is_connected() {
+                println!("Cannot resign - not connected to server");
+                return Ok(());
+            }
+            if let Err(e) = client.resign() {
+                println!("Error resigning: {}", e);
+            } else {
+                // Set game as over immediately - don't wait for server confirmation
+                self.game_over = true;
+                self.needs_redraw = true;
+            }
+        }
+        Ok(())
+    }
+    
+    pub fn request_rematch(&mut self) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            if !client.is_connected() {
+                println!("Cannot request rematch - not connected to server");
+                return Ok(());
+            }
+            if let Err(e) = client.request_rematch() {
+                println!("Error requesting rematch: {}", e);
+            }
+        }
+        Ok(())
     }
 } 

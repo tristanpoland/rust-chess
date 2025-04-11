@@ -38,6 +38,15 @@ pub enum NetworkMessage {
         available_games: Vec<GameInfo>,
     },
     RequestGameList,
+    OfferDraw,
+    AcceptDraw,
+    DeclineDraw,
+    Resign,
+    RequestRematch,
+    RematchAccepted {
+        is_white: bool,
+    },
+    DrawOffered,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -172,6 +181,97 @@ impl ChessClient {
 
     pub fn is_connected(&self) -> bool {
         self.stream.is_some()
+    }
+    
+    // New methods for draw, resignation, and rematch functionality
+    pub fn offer_draw(&mut self) -> Result<(), std::io::Error> {
+        let message = NetworkMessage::OfferDraw;
+        let serialized = serde_json::to_string(&message)?;
+        
+        if let Some(stream) = &mut self.stream {
+            match stream.write_all(format!("{}\n", serialized).as_bytes()) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    println!("Error offering draw: {}", e);
+                    self.stream = None;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"))
+        }
+    }
+    
+    pub fn accept_draw(&mut self) -> Result<(), std::io::Error> {
+        let message = NetworkMessage::AcceptDraw;
+        let serialized = serde_json::to_string(&message)?;
+        
+        if let Some(stream) = &mut self.stream {
+            match stream.write_all(format!("{}\n", serialized).as_bytes()) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    println!("Error accepting draw: {}", e);
+                    self.stream = None;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"))
+        }
+    }
+    
+    pub fn decline_draw(&mut self) -> Result<(), std::io::Error> {
+        let message = NetworkMessage::DeclineDraw;
+        let serialized = serde_json::to_string(&message)?;
+        
+        if let Some(stream) = &mut self.stream {
+            match stream.write_all(format!("{}\n", serialized).as_bytes()) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    println!("Error declining draw: {}", e);
+                    self.stream = None;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"))
+        }
+    }
+    
+    pub fn resign(&mut self) -> Result<(), std::io::Error> {
+        let message = NetworkMessage::Resign;
+        let serialized = serde_json::to_string(&message)?;
+        
+        if let Some(stream) = &mut self.stream {
+            match stream.write_all(format!("{}\n", serialized).as_bytes()) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    println!("Error resigning: {}", e);
+                    self.stream = None;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"))
+        }
+    }
+    
+    pub fn request_rematch(&mut self) -> Result<(), std::io::Error> {
+        let message = NetworkMessage::RequestRematch;
+        let serialized = serde_json::to_string(&message)?;
+        
+        if let Some(stream) = &mut self.stream {
+            match stream.write_all(format!("{}\n", serialized).as_bytes()) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    println!("Error requesting rematch: {}", e);
+                    self.stream = None;
+                    Err(e)
+                }
+            }
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "Not connected to server"))
+        }
     }
 }
 

@@ -145,6 +145,206 @@ impl Game {
                         }
                     }
                 }
+                Ok(Some(NetworkMessage::OfferDraw)) => {
+                    // Forward draw offer to the other player
+                    let draw_offer = NetworkMessage::DrawOffered;
+                    let serialized = format!("{}\n", serde_json::to_string(&draw_offer)?);
+                    
+                    // Send to the non-current player
+                    if current_turn {
+                        // White is offering a draw, send to black
+                        if let Some(black_client) = &mut self.black_client {
+                            if let Some(stream) = &mut black_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending draw offer to black client: {}", e);
+                                    black_client.stream = None;
+                                }
+                            }
+                        }
+                    } else {
+                        // Black is offering a draw, send to white
+                        if let Some(white_client) = &mut self.white_client {
+                            if let Some(stream) = &mut white_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending draw offer to white client: {}", e);
+                                    white_client.stream = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Some(NetworkMessage::AcceptDraw)) => {
+                    // Forward draw acceptance to both players
+                    let accept_draw = NetworkMessage::AcceptDraw;
+                    let serialized = format!("{}\n", serde_json::to_string(&accept_draw)?);
+                    
+                    // Send to both players
+                    if let Some(white_client) = &mut self.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending draw acceptance to white client: {}", e);
+                                white_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    if let Some(black_client) = &mut self.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending draw acceptance to black client: {}", e);
+                                black_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    // End the game
+                    let end_message = NetworkMessage::GameEnd { reason: "Draw agreed".to_string() };
+                    let serialized = format!("{}\n", serde_json::to_string(&end_message)?);
+                    
+                    if let Some(white_client) = &mut self.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to white client: {}", e);
+                                white_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    if let Some(black_client) = &mut self.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to black client: {}", e);
+                                black_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    self.status = GameStatus::Completed;
+                    self.game_state.game_over = true;
+                    break;
+                }
+                Ok(Some(NetworkMessage::DeclineDraw)) => {
+                    // Forward draw decline to the other player
+                    let decline_draw = NetworkMessage::DeclineDraw;
+                    let serialized = format!("{}\n", serde_json::to_string(&decline_draw)?);
+                    
+                    // Send to the non-current player (the one who offered the draw)
+                    if !current_turn {
+                        // White offered a draw, send decline to white
+                        if let Some(white_client) = &mut self.white_client {
+                            if let Some(stream) = &mut white_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending draw decline to white client: {}", e);
+                                    white_client.stream = None;
+                                }
+                            }
+                        }
+                    } else {
+                        // Black offered a draw, send decline to black
+                        if let Some(black_client) = &mut self.black_client {
+                            if let Some(stream) = &mut black_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending draw decline to black client: {}", e);
+                                    black_client.stream = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Some(NetworkMessage::Resign)) => {
+                    // Handle resignation
+                    let resigner_color = if current_turn { "White" } else { "Black" };
+                    let reason = format!("{} resigned", resigner_color);
+                    
+                    // Forward resignation to both players
+                    let resign_message = NetworkMessage::Resign;
+                    let serialized = format!("{}\n", serde_json::to_string(&resign_message)?);
+                    
+                    // For non-resigning player
+                    if current_turn {
+                        // White resigned, send to black
+                        if let Some(black_client) = &mut self.black_client {
+                            if let Some(stream) = &mut black_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending resignation to black client: {}", e);
+                                    black_client.stream = None;
+                                }
+                            }
+                        }
+                    } else {
+                        // Black resigned, send to white
+                        if let Some(white_client) = &mut self.white_client {
+                            if let Some(stream) = &mut white_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending resignation to white client: {}", e);
+                                    white_client.stream = None;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Send game end message to both
+                    let end_message = NetworkMessage::GameEnd { reason };
+                    let serialized = format!("{}\n", serde_json::to_string(&end_message)?);
+                    
+                    if let Some(white_client) = &mut self.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to white client: {}", e);
+                                white_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    if let Some(black_client) = &mut self.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to black client: {}", e);
+                                black_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    self.status = GameStatus::Completed;
+                    self.game_state.game_over = true;
+                    break;
+                }
+                Ok(Some(NetworkMessage::RequestRematch)) => {
+                    // Forward rematch request to the other player
+                    let rematch_request = NetworkMessage::RequestRematch;
+                    let serialized = format!("{}\n", serde_json::to_string(&rematch_request)?);
+                    
+                    if current_turn {
+                        // White is requesting a rematch, send to black
+                        if let Some(black_client) = &mut self.black_client {
+                            if let Some(stream) = &mut black_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending rematch request to black client: {}", e);
+                                    black_client.stream = None;
+                                }
+                            }
+                        }
+                    } else {
+                        // Black is requesting a rematch, send to white
+                        if let Some(white_client) = &mut self.white_client {
+                            if let Some(stream) = &mut white_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending rematch request to white client: {}", e);
+                                    white_client.stream = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Some(NetworkMessage::RematchAccepted { .. })) => {
+                    // This message should come from a client accepting a rematch
+                    println!("Received RematchAccepted message from client, ignoring");
+                    // The actual rematch handling happens in the main game loop after the game ends
+                }
+                Ok(Some(NetworkMessage::DrawOffered)) => {
+                    // This message should come from the server to clients, not from clients
+                    println!("Received unexpected DrawOffered message from client, ignoring");
+                }
                 Ok(Some(NetworkMessage::GameStart { .. })) => {
                     // Ignore GameStart messages after initial setup
                     println!("Received unexpected GameStart message");
@@ -264,6 +464,45 @@ impl Game {
 
         Ok(())
     }
+    
+    fn reset_game(&mut self, swap_colors: bool) -> Result<(), std::io::Error> {
+        // Reset the game state
+        self.game_state = GameState::new();
+        self.status = GameStatus::InProgress;
+        
+        // Optionally swap player colors
+        if swap_colors {
+            std::mem::swap(&mut self.white_client, &mut self.black_client);
+        }
+        
+        // Notify clients about the new game and their colors
+        if let Some(white_client) = &mut self.white_client {
+            let message = NetworkMessage::RematchAccepted { is_white: true };
+            if let Some(stream) = &mut white_client.stream {
+                if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message)?).as_bytes()) {
+                    println!("Error sending rematch accepted to white client: {}", e);
+                    white_client.stream = None;
+                }
+            }
+            white_client.is_white = true;
+        }
+        
+        if let Some(black_client) = &mut self.black_client {
+            let message = NetworkMessage::RematchAccepted { is_white: false };
+            if let Some(stream) = &mut black_client.stream {
+                if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message)?).as_bytes()) {
+                    println!("Error sending rematch accepted to black client: {}", e);
+                    black_client.stream = None;
+                }
+            }
+            black_client.is_white = false;
+        }
+        
+        // Send initial game state
+        self.broadcast_game_state()?;
+        
+        Ok(())
+    }
 }
 
 pub struct ChessServer {
@@ -321,7 +560,7 @@ impl ChessServer {
                     let games_clone = Arc::clone(&self.games);
                     
                     // Wait for initial message from client
-                    let mut connected = true;
+                    let connected = true;
                     while connected {
                         match client.receive_message() {
                             Ok(Some(NetworkMessage::CreateGame { player_name })) => {
@@ -398,18 +637,105 @@ impl ChessServer {
                                         // Release the lock before running the game
                                         drop(games);
                                         
-                                        // Actually run the game
-                                        {
-                                            let mut games = games_for_thread.lock().unwrap();
-                                            if let Some(game) = games.get_mut(&game_id_clone) {
-                                                if let Err(e) = game.run() {
-                                                    println!("Error running game {}: {}", game_id_clone, e);
+                                        // Loop for multiple games (to handle rematches)
+                                        loop {
+                                            // Run the game
+                                            {
+                                                let mut games = games_for_thread.lock().unwrap();
+                                                if let Some(game) = games.get_mut(&game_id_clone) {
+                                                    if let Err(e) = game.run() {
+                                                        println!("Error running game {}: {}", game_id_clone, e);
+                                                        break;
+                                                    }
+                                                } else {
+                                                    break;
                                                 }
+                                            }
+                                            
+                                            // Game is over, wait for rematch requests
+                                            let mut _rematch_requested = false;
+                                            let mut rematch_accepted = false;
+                                            
+                                            // Wait for up to 60 seconds for a rematch request
+                                            for _ in 0..600 { // 600 * 100ms = 60 seconds
+                                                {
+                                                    let mut games = games_for_thread.lock().unwrap();
+                                                    if let Some(game) = games.get_mut(&game_id_clone) {
+                                                        // Check if a rematch request was sent
+                                                        if let Some(white_client) = &mut game.white_client {
+                                                            if let Ok(Some(NetworkMessage::RequestRematch)) = white_client.receive_message() {
+                                                                _rematch_requested = true;
+                                                                
+                                                                // Forward rematch request to black
+                                                                if let Some(black_client) = &mut game.black_client {
+                                                                    let message = NetworkMessage::RequestRematch;
+                                                                    if let Some(stream) = &mut black_client.stream {
+                                                                        if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message).unwrap()).as_bytes()) {
+                                                                            println!("Error sending rematch request to black client: {}", e);
+                                                                            black_client.stream = None;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        if let Some(black_client) = &mut game.black_client {
+                                                            if let Ok(Some(NetworkMessage::RequestRematch)) = black_client.receive_message() {
+                                                                _rematch_requested = true;
+                                                                
+                                                                // Forward rematch request to white
+                                                                if let Some(white_client) = &mut game.white_client {
+                                                                    let message = NetworkMessage::RequestRematch;
+                                                                    if let Some(stream) = &mut white_client.stream {
+                                                                        if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message).unwrap()).as_bytes()) {
+                                                                            println!("Error sending rematch request to white client: {}", e);
+                                                                            white_client.stream = None;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        // Check if rematch was accepted
+                                                        if let Some(white_client) = &mut game.white_client {
+                                                            if let Ok(Some(NetworkMessage::AcceptDraw)) = white_client.receive_message() {
+                                                                // Using AcceptDraw as a proxy for accepting rematch
+                                                                rematch_accepted = true;
+                                                            }
+                                                        }
+                                                        
+                                                        if let Some(black_client) = &mut game.black_client {
+                                                            if let Ok(Some(NetworkMessage::AcceptDraw)) = black_client.receive_message() {
+                                                                // Using AcceptDraw as a proxy for accepting rematch
+                                                                rematch_accepted = true;
+                                                            }
+                                                        }
+                                                        
+                                                        // If rematch accepted, reset the game with swapped colors
+                                                        if rematch_accepted {
+                                                            println!("Rematch accepted for game {}", game_id_clone);
+                                                            if let Err(e) = game.reset_game(true) { // Swap colors for fairness
+                                                                println!("Error resetting game {}: {}", game_id_clone, e);
+                                                            }
+                                                            break;
+                                                        }
+                                                    } else {
+                                                        // Game was removed
+                                                        break;
+                                                    }
+                                                }
+                                                
+                                                // Sleep to avoid busy waiting
+                                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                            }
+                                            
+                                            // If no rematch was accepted, break the loop
+                                            if !rematch_accepted {
+                                                break;
                                             }
                                         }
                                         
-                                        // Clean up completed game after some delay
-                                        std::thread::sleep(std::time::Duration::from_secs(60));
+                                        // Clean up completed game
                                         let mut games = games_for_thread.lock().unwrap();
                                         games.remove(&game_id_clone);
                                         println!("Game {} removed from active games", game_id_clone);
