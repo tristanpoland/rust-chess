@@ -131,6 +131,8 @@ pub struct ChessGui {
     server_address: String,
     show_game_list: bool,
     hovered_button: Option<usize>, // Index of button being hovered (0=connect, 1=create, 2=refresh, 3+=join game buttons)
+    // Promotion tracking
+    pending_promotion_move: Option<MoveInfo>,
 }
 
 impl ChessGui {
@@ -138,13 +140,12 @@ impl ChessGui {
         let game_state = GameState::new();
         let assets = Assets::new(ctx)?;
         
-        // Create network buttons
         let connect_button = Button::new(
             BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
             BOARD_OFFSET_Y,
             BUTTON_WIDTH,
             BUTTON_HEIGHT,
-            "Connect"
+            "Connect to Server"
         );
         
         let create_game_button = Button::new(
@@ -163,10 +164,10 @@ impl ChessGui {
             "Refresh Games"
         );
         
-        // Create game action buttons
+        // Game action buttons - positioned below the board
         let offer_draw_button = Button::new(
             BOARD_OFFSET_X,
-            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + 80.0,
+            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
             BUTTON_WIDTH,
             BUTTON_HEIGHT,
             "Offer Draw"
@@ -174,7 +175,7 @@ impl ChessGui {
         
         let resign_button = Button::new(
             BOARD_OFFSET_X + BUTTON_WIDTH + BUTTON_MARGIN,
-            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + 80.0,
+            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
             BUTTON_WIDTH,
             BUTTON_HEIGHT,
             "Resign"
@@ -182,10 +183,10 @@ impl ChessGui {
         
         let rematch_button = Button::new(
             BOARD_OFFSET_X + 2.0 * (BUTTON_WIDTH + BUTTON_MARGIN),
-            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + 80.0,
+            BOARD_OFFSET_Y + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
             BUTTON_WIDTH,
             BUTTON_HEIGHT,
-            "Rematch"
+            "Request Rematch"
         );
         
         Ok(Self {
@@ -214,6 +215,7 @@ impl ChessGui {
             server_address: "localhost:8080".to_string(),
             show_game_list: false,
             hovered_button: None,
+            pending_promotion_move: None,
         })
     }
     
@@ -976,7 +978,9 @@ impl ChessGui {
                     
                     if self.is_network_game {
                         if self.game_state.promotion_pending.is_some() {
-                            return Ok(Some(MoveInfo { from, to, promotion: None }));
+                            // Store the move information for when promotion is selected
+                            self.pending_promotion_move = Some(MoveInfo { from, to, promotion: None });
+                            return Ok(None);
                         }
                         
                         // This is a network game, send the move
@@ -1184,7 +1188,29 @@ impl ChessGui {
                     let promotion_pieces = [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight];
                     let selected_piece = promotion_pieces[piece_index];
                     
+                    // Apply the promotion locally
                     self.game_state.promote_pawn(selected_piece);
+                    
+                    // If in a network game, send the promotion choice to the server
+                    if self.is_network_game {
+                        // Convert selection to the character representation for the network message
+                        let promotion_char = match selected_piece {
+                            PieceType::Queen => 'Q',
+                            PieceType::Rook => 'R',
+                            PieceType::Bishop => 'B',
+                            PieceType::Knight => 'N',
+                            _ => unreachable!(),
+                        };
+                        
+                        // Use the stored move information from when the promotion was triggered
+                        if let Some(mut move_info) = self.pending_promotion_move.take() {
+                            // Update with the selected promotion piece
+                            move_info.promotion = Some(promotion_char);
+                            
+                            // Send the complete move with promotion information
+                            self.send_move(move_info.from, move_info.to, move_info.promotion)?;
+                        }
+                    }
                     
                     self.check_game_end();
                     
