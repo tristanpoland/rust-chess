@@ -24,6 +24,11 @@ A simple chess game implemented in Rust using the ggez game engine.
 - Game management:
   - New game button
   - Algebraic notation coordinate display
+- Network play:
+  - Host or join multiplayer games
+  - Real-time move synchronization
+  - Game listing and selection
+  - Player name customization
 
 ## Requirements
 
@@ -39,6 +44,28 @@ A simple chess game implemented in Rust using the ggez game engine.
 ```
 cargo run --release
 ```
+
+## Network Play
+
+To play against other players over the network:
+
+### Starting a Server
+
+```
+cargo run --release -- --server
+```
+
+### Playing a Network Game
+
+```
+cargo run --release -- --network [--address SERVER_ADDRESS] [--name PLAYER_NAME] [--join GAME_ID]
+```
+
+- `--address`: Optional server address (default: localhost:8080)
+- `--name`: Optional player name
+- `--join`: Optional game ID to join directly
+
+If no specific game ID is provided, you'll be prompted to create a new game or join an existing one.
 
 ## How to Play
 
@@ -66,8 +93,10 @@ The game structure is organized into several modules:
 
 - `piece.rs`: Defines the chess pieces and their movement rules
 - `board.rs`: Manages the game state, board representation, and rule enforcement
-- `gui.rs`: Handles rendering and user interaction
+- `gui.rs`: Handles rendering, user interaction, and integrated networking
 - `assets.rs`: Manages loading and displaying piece images
+- `network.rs`: Contains client networking functionality
+- `server.rs`: Implements the multiplayer game server
 - `main.rs`: Entry point that sets up the game window and event loop
 
 ## Future Improvements
@@ -75,4 +104,4 @@ The game structure is organized into several modules:
 - Game history and move notation
 - Load and save functionality
 - AI opponent
-- Network play 
+- Enhanced network play features 

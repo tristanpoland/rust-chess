@@ -6,6 +6,8 @@ use ggez::mint::{Point2, Vector2};
 use crate::board::{GameState, BOARD_SIZE, PromotionState};
 use crate::piece::{PieceType, Color, Piece};
 use crate::assets::Assets;
+use crate::network::{ChessClient, NetworkMessage, GameInfo};
+use std::io::Write;
 
 const SQUARE_SIZE: f32 = 60.0;
 const BOARD_OFFSET_X: f32 = 50.0;
@@ -100,12 +102,50 @@ pub struct ChessGui {
     needs_redraw: bool,
     is_network_game: bool,
     player_color: Option<Color>,
+    network_client: Option<ChessClient>,
+    game_id: Option<String>,
+    player_name: String,
+    available_games: Vec<GameInfo>,
+    // Network buttons
+    connect_button: Button,
+    create_game_button: Button,
+    refresh_games_button: Button,
+    join_game_buttons: Vec<Button>,
+    // Button state
+    server_address: String,
+    show_game_list: bool,
+    hovered_button: Option<usize>, // Index of button being hovered (0=connect, 1=create, 2=refresh, 3+=join game buttons)
 }
 
 impl ChessGui {
     pub fn new(ctx: &mut Context) -> GameResult<Self> {
         let game_state = GameState::new();
         let assets = Assets::new(ctx)?;
+        
+        // Create network buttons
+        let connect_button = Button::new(
+            BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+            BOARD_OFFSET_Y,
+            BUTTON_WIDTH,
+            BUTTON_HEIGHT,
+            "Connect"
+        );
+        
+        let create_game_button = Button::new(
+            BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+            BOARD_OFFSET_Y + BUTTON_HEIGHT + BUTTON_MARGIN,
+            BUTTON_WIDTH,
+            BUTTON_HEIGHT,
+            "Create Game"
+        );
+        
+        let refresh_games_button = Button::new(
+            BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+            BOARD_OFFSET_Y + 2.0 * (BUTTON_HEIGHT + BUTTON_MARGIN),
+            BUTTON_WIDTH,
+            BUTTON_HEIGHT,
+            "Refresh Games"
+        );
         
         Ok(Self {
             game_state,
@@ -117,6 +157,17 @@ impl ChessGui {
             needs_redraw: true,
             is_network_game: false,
             player_color: None,
+            network_client: None,
+            game_id: None,
+            player_name: String::new(),
+            available_games: Vec::new(),
+            connect_button,
+            create_game_button,
+            refresh_games_button,
+            join_game_buttons: Vec::new(),
+            server_address: "localhost:8080".to_string(),
+            show_game_list: false,
+            hovered_button: None,
         })
     }
     
@@ -194,6 +245,74 @@ impl ChessGui {
         self.draw_pieces(&mut canvas);
         
         self.draw_status(&mut canvas)?;
+        
+        // Draw network buttons in the right sidebar
+        self.connect_button.draw(ctx, &mut canvas)?;
+        
+        if self.network_client.is_some() {
+            self.create_game_button.draw(ctx, &mut canvas)?;
+            self.refresh_games_button.draw(ctx, &mut canvas)?;
+            
+            // Draw connection status
+            let connection_status = if self.network_client.as_ref().map_or(false, |c| c.is_connected()) {
+                "Connected"
+            } else {
+                "Disconnected"
+            };
+            
+            let status_text = Text::new(connection_status);
+            canvas.draw(
+                &status_text,
+                DrawParam::default()
+                    .dest(Point2 {
+                        x: BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+                        y: BOARD_OFFSET_Y + 3.0 * (BUTTON_HEIGHT + BUTTON_MARGIN),
+                    })
+                    .color(if connection_status == "Connected" { GgezColor::GREEN } else { GgezColor::RED })
+            );
+            
+            // Draw game list if it's visible
+            if self.show_game_list {
+                // Draw game list background
+                let list_y = BOARD_OFFSET_Y + 4.0 * (BUTTON_HEIGHT + BUTTON_MARGIN);
+                let list_width = BUTTON_WIDTH;
+                let list_height = self.available_games.len() as f32 * (BUTTON_HEIGHT + 5.0);
+                
+                if !self.available_games.is_empty() {
+                    let list_rect = Rect::new(
+                        BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+                        list_y,
+                        list_width,
+                        list_height
+                    );
+                    
+                    let list_bg = graphics::Mesh::new_rectangle(
+                        ctx,
+                        graphics::DrawMode::fill(),
+                        list_rect,
+                        GgezColor::new(0.2, 0.2, 0.3, 1.0),
+                    )?;
+                    canvas.draw(&list_bg, DrawParam::default());
+                    
+                    // Draw game list items
+                    for (_i, button) in self.join_game_buttons.iter().enumerate() {
+                        button.draw(ctx, &mut canvas)?;
+                    }
+                } else {
+                    // Draw "No games available" message
+                    let no_games_text = Text::new("No games available");
+                    canvas.draw(
+                        &no_games_text,
+                        DrawParam::default()
+                            .dest(Point2 {
+                                x: BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+                                y: list_y,
+                            })
+                            .color(GgezColor::WHITE)
+                    );
+                }
+            }
+        }
         
         if self.game_state.promotion_pending.is_some() {
             self.draw_promotion_dialog(ctx, &mut canvas)?;
@@ -417,6 +536,67 @@ impl ChessGui {
         if button != MouseButton::Left {
             return Ok(None);
         }
+        
+        // Check if a network button was clicked
+        let point = Point2 { x, y };
+        
+        if self.connect_button.contains(point) {
+            // Attempt to connect to server
+            if self.network_client.is_none() {
+                // Use a default player name if none is set
+                let player_name = if self.player_name.is_empty() {
+                    "Player".to_string()
+                } else {
+                    self.player_name.clone()
+                };
+                
+                // Clone the server address to avoid borrowing issues
+                let server_address = self.server_address.clone();
+                if let Err(e) = self.init_network(&server_address, player_name) {
+                    println!("Error connecting to server: {}", e);
+                }
+                self.needs_redraw = true;
+                return Ok(None);
+            }
+        }
+        
+        if self.network_client.is_some() {
+            if self.create_game_button.contains(point) {
+                // Create a new game
+                if let Err(e) = self.create_game() {
+                    println!("Error creating game: {}", e);
+                }
+                self.needs_redraw = true;
+                return Ok(None);
+            }
+            
+            if self.refresh_games_button.contains(point) {
+                // Refresh game list
+                if let Err(e) = self.request_game_list() {
+                    println!("Error refreshing game list: {}", e);
+                }
+                self.show_game_list = true;
+                
+                // Update the join game buttons
+                self.update_join_game_buttons();
+                
+                self.needs_redraw = true;
+                return Ok(None);
+            }
+            
+            // Check if any join game button was clicked
+            for (i, button) in self.join_game_buttons.iter().enumerate() {
+                if button.contains(point) && i < self.available_games.len() {
+                    let game_id = self.available_games[i].game_id.clone();
+                    if let Err(e) = self.join_game(game_id) {
+                        println!("Error joining game: {}", e);
+                    }
+                    self.show_game_list = false;
+                    self.needs_redraw = true;
+                    return Ok(None);
+                }
+            }
+        }
 
         if self.game_over {
             return Ok(None);
@@ -447,8 +627,13 @@ impl ChessGui {
                     self.possible_moves.clear();
                     self.needs_redraw = true;
                     
-                    if self.game_state.promotion_pending.is_some() {
-                        return Ok(Some(MoveInfo { from, to, promotion: None }));
+                    if self.is_network_game {
+                        if self.game_state.promotion_pending.is_some() {
+                            return Ok(Some(MoveInfo { from, to, promotion: None }));
+                        }
+                        
+                        // This is a network game, send the move
+                        self.send_move(from, to, None)?;
                     }
                     
                     return Ok(Some(MoveInfo { from, to, promotion: None }));
@@ -482,11 +667,51 @@ impl ChessGui {
     }
     
     pub fn handle_mouse_move(&mut self, x: f32, y: f32) -> GameResult<()> {
+        let point = Point2 { x, y };
+        let mut needs_redraw = false;
+        
+        // Reset all button hover states
+        self.connect_button.set_hover(false);
+        self.create_game_button.set_hover(false);
+        self.refresh_games_button.set_hover(false);
+        
+        for button in &mut self.join_game_buttons {
+            button.set_hover(false);
+        }
+        
+        // Set hover state for the button under the mouse
+        if self.connect_button.contains(point) {
+            self.connect_button.set_hover(true);
+            needs_redraw = true;
+        } else if self.network_client.is_some() {
+            if self.create_game_button.contains(point) {
+                self.create_game_button.set_hover(true);
+                needs_redraw = true;
+            } else if self.refresh_games_button.contains(point) {
+                self.refresh_games_button.set_hover(true);
+                needs_redraw = true;
+            } else {
+                for button in &mut self.join_game_buttons {
+                    if button.contains(point) {
+                        button.set_hover(true);
+                        needs_redraw = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        if needs_redraw {
+            self.needs_redraw = true;
+        }
+        
         Ok(())
     }
     
     pub fn update(&mut self) -> GameResult<()> {
-        // No timer updates needed anymore
+        if self.is_network_game {
+            self.handle_network_messages()?;
+        }
         Ok(())
     }
     
@@ -549,11 +774,19 @@ impl ChessGui {
     }
 
     fn get_square_from_coords(&self, x: f32, y: f32) -> (usize, usize) {
-        let display_file = ((x - BOARD_OFFSET_X) / SQUARE_SIZE) as usize;
-        let display_rank = ((y - BOARD_OFFSET_Y) / SQUARE_SIZE) as usize;
+        // Calculate the display coordinates from the screen position
+        let display_file = ((x - BOARD_OFFSET_X) / SQUARE_SIZE) as isize;
+        let display_rank = ((y - BOARD_OFFSET_Y) / SQUARE_SIZE) as isize;
+        
+        // Check if the coordinates are within the board bounds
+        if display_file < 0 || display_file >= BOARD_SIZE as isize || 
+           display_rank < 0 || display_rank >= BOARD_SIZE as isize {
+            // If clicked outside the board, return a safe default position
+            return (0, 0);
+        }
         
         // Convert display coordinates to internal coordinates
-        self.get_internal_coordinates(display_rank, display_file)
+        self.get_internal_coordinates(display_rank as usize, display_file as usize)
     }
     
     // Helper method to check if board should be inverted
@@ -576,10 +809,184 @@ impl ChessGui {
     fn get_internal_coordinates(&self, display_rank: usize, display_file: usize) -> (usize, usize) {
         if self.is_inverted_board() {
             // For black perspective: flip both rank and file
-            (7 - display_rank, 7 - display_file)
+            // Ensure the result stays in bounds (0-7)
+            let rank = if display_rank < BOARD_SIZE { 7 - display_rank } else { 0 };
+            let file = if display_file < BOARD_SIZE { 7 - display_file } else { 0 };
+            (rank, file)
         } else {
             // For white perspective: use coordinates as-is
-            (display_rank, display_file)
+            // Ensure the result stays in bounds (0-7)
+            let rank = if display_rank < BOARD_SIZE { display_rank } else { 0 };
+            let file = if display_file < BOARD_SIZE { display_file } else { 0 };
+            (rank, file)
         }
+    }
+
+    // New method to initialize networking
+    pub fn init_network(&mut self, server_address: &str, player_name: String) -> GameResult<()> {
+        self.player_name = player_name;
+        self.network_client = match ChessClient::new(server_address) {
+            Ok(client) => Some(client),
+            Err(e) => {
+                println!("Failed to connect to server: {}", e);
+                return Err(ggez::GameError::CustomError(format!("Network error: {}", e)));
+            }
+        };
+        self.is_network_game = true;
+        self.needs_redraw = true;
+        Ok(())
+    }
+
+    pub fn create_game(&mut self) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            // Create a new game
+            let create_game = NetworkMessage::CreateGame { 
+                player_name: self.player_name.clone() 
+            };
+            let serialized = serde_json::to_string(&create_game).unwrap();
+            if let Some(stream) = &mut client.stream {
+                stream.write_all(format!("{}\n", serialized).as_bytes())?;
+            }
+            println!("Waiting for another player to join...");
+        }
+        Ok(())
+    }
+
+    pub fn join_game(&mut self, game_id: String) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            // Join existing game
+            let join_game = NetworkMessage::JoinGame { 
+                game_id: game_id.clone(),
+                player_name: self.player_name.clone() 
+            };
+            let serialized = serde_json::to_string(&join_game).unwrap();
+            if let Some(stream) = &mut client.stream {
+                stream.write_all(format!("{}\n", serialized).as_bytes())?;
+            }
+            println!("Joining game {}...", game_id);
+        }
+        Ok(())
+    }
+
+    pub fn request_game_list(&mut self) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            let request = NetworkMessage::RequestGameList;
+            let serialized = serde_json::to_string(&request).unwrap();
+            if let Some(stream) = &mut client.stream {
+                stream.write_all(format!("{}\n", serialized).as_bytes())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_available_games(&self) -> &Vec<GameInfo> {
+        &self.available_games
+    }
+
+    pub fn handle_network_messages(&mut self) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            if !client.is_connected() {
+                println!("Attempting to reconnect...");
+                if let Err(e) = client.reconnect() {
+                    println!("Failed to reconnect: {}", e);
+                    return Ok(());
+                }
+            }
+
+            match client.receive_message() {
+                Ok(Some(NetworkMessage::Move { from, to, promotion })) => {
+                    self.handle_network_move(from, to, promotion)?;
+                }
+                Ok(Some(NetworkMessage::GameStart { is_white, game_id })) => {
+                    self.set_player_color(is_white);
+                    self.game_id = Some(game_id.clone());
+                    println!("Game started! You are playing as {}", if is_white { "white" } else { "black" });
+                }
+                Ok(Some(NetworkMessage::GameState { board, current_turn, promotion_pending, game_over })) => {
+                    self.update_game_state(board, current_turn, promotion_pending, game_over)?;
+                }
+                Ok(Some(NetworkMessage::GameEnd { reason })) => {
+                    println!("Game ended: {}", reason);
+                    self.game_over = true;
+                }
+                Ok(Some(NetworkMessage::GameCreated { game_id })) => {
+                    self.game_id = Some(game_id.clone());
+                    println!("Game created with ID: {}", game_id);
+                    println!("Waiting for an opponent to join...");
+                }
+                Ok(Some(NetworkMessage::GameList { available_games })) => {
+                    self.available_games = available_games;
+                    println!("Available games:");
+                    for (i, game) in self.available_games.iter().enumerate() {
+                        println!("{}. {} (hosted by {})", i + 1, game.game_id, game.host_name);
+                    }
+                    // Update join game buttons after receiving new game list
+                    self.update_join_game_buttons();
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::CreateGame { .. })) => {
+                    // Ignore unexpected CreateGame messages from server
+                    println!("Received unexpected CreateGame message");
+                }
+                Ok(Some(NetworkMessage::JoinGame { .. })) => {
+                    // Ignore unexpected JoinGame messages from server
+                    println!("Received unexpected JoinGame message");
+                }
+                Ok(Some(NetworkMessage::RequestGameList)) => {
+                    // Ignore unexpected RequestGameList messages from server
+                    println!("Received unexpected RequestGameList message");
+                }
+                Ok(None) => {
+                    // No message received, continue
+                }
+                Err(e) => {
+                    println!("Network error: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn send_move(&mut self, from: (u8, u8), to: (u8, u8), promotion: Option<char>) -> GameResult<()> {
+        if let Some(client) = &mut self.network_client {
+            if !client.is_connected() {
+                println!("Cannot send move - not connected to server");
+                return Ok(());
+            }
+            if let Err(e) = client.send_move(from, to, promotion) {
+                println!("Error sending move: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    // New method to update join game buttons based on available games
+    fn update_join_game_buttons(&mut self) {
+        self.join_game_buttons.clear();
+        
+        let base_y = BOARD_OFFSET_Y + 4.0 * (BUTTON_HEIGHT + BUTTON_MARGIN);
+        
+        for (i, game) in self.available_games.iter().enumerate() {
+            let y = base_y + i as f32 * (BUTTON_HEIGHT + 5.0);
+            let button_text = format!("Join: {}", game.host_name);
+            
+            let button = Button::new(
+                BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+                y,
+                BUTTON_WIDTH,
+                BUTTON_HEIGHT,
+                &button_text
+            );
+            
+            self.join_game_buttons.push(button);
+        }
+    }
+
+    pub fn set_server_address(&mut self, address: String) {
+        self.server_address = address;
+    }
+    
+    pub fn get_server_address(&self) -> &str {
+        &self.server_address
     }
 } 

@@ -1,4 +1,4 @@
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::io::Write;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -7,7 +7,7 @@ use uuid::Uuid;
 use serde_json;
 use crate::network::{ChessClient, NetworkMessage, GameInfo, GameStatus};
 use crate::board::GameState;
-use crate::piece::{Color, PieceType};
+use crate::piece::PieceType;
 
 struct Game {
     id: String,
@@ -280,7 +280,7 @@ impl ChessServer {
         })
     }
 
-    fn send_game_list(&self, mut client: &mut ChessClient) -> Result<(), std::io::Error> {
+    fn send_game_list(&self, client: &mut ChessClient) -> Result<(), std::io::Error> {
         let games = self.games.lock().unwrap();
         let game_infos: Vec<GameInfo> = games.values()
             .filter(|game| game.status == GameStatus::Waiting)
@@ -312,7 +312,7 @@ impl ChessServer {
         
         loop {
             match self.listener.accept() {
-                Ok((mut stream, addr)) => {
+                Ok((stream, addr)) => {
                     println!("New connection from: {}", addr);
                     stream.set_nonblocking(true)?;
                     
@@ -337,7 +337,6 @@ impl ChessServer {
                                 if let Some(ref mut stream) = game.white_client.as_mut().unwrap().stream {
                                     if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message)?).as_bytes()) {
                                         println!("Error sending game created confirmation: {}", e);
-                                        connected = false;
                                         break;
                                     }
                                 }
@@ -417,7 +416,6 @@ impl ChessServer {
                                     }
                                 });
                                 
-                                connected = false;
                                 break;
                             },
                             Ok(Some(NetworkMessage::JoinGame { game_id, player_name })) => {
@@ -431,7 +429,6 @@ impl ChessServer {
                                         client.is_white = false;
                                         game.black_client = Some(client);
                                         
-                                        connected = false;
                                         break;
                                     } else {
                                         println!("Game {} is not available for joining", game_id);
@@ -443,7 +440,6 @@ impl ChessServer {
                             Ok(Some(NetworkMessage::RequestGameList)) => {
                                 if let Err(e) = self.send_game_list(&mut client) {
                                     println!("Error sending game list: {}", e);
-                                    connected = false;
                                     break;
                                 }
                             },
@@ -453,7 +449,6 @@ impl ChessServer {
                             },
                             Err(e) => {
                                 println!("Error receiving message from new client: {}", e);
-                                connected = false;
                                 break;
                             },
                             _ => {
