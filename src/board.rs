@@ -118,33 +118,41 @@ impl GameState {
             
             if piece.piece_type == PieceType::Pawn && old_en_passant == Some(to) && 
                from_file != to_file && self.board[to_rank][to_file].is_none() {
-                let captured_pawn_rank = from_rank;
-                let captured_pawn_file = to_file;
+                // Check that the pawn is on the correct rank for en passant
+                let correct_en_passant_rank = match piece.color {
+                    Color::White => 3, // 5th rank (index 3)
+                    Color::Black => 4, // 4th rank (index 4)
+                };
                 
-                self.update_hash_for_move(&piece, from, to);
-                
-                let captured_color = if piece.color == Color::White { BLACK } else { WHITE };
-                let captured_square = captured_pawn_rank * 8 + captured_pawn_file;
-                self.current_hash ^= ZOBRIST.piece_keys[captured_color][0][captured_square]; // Remove captured pawn
-                
-                piece.has_moved = true;
-                self.board[to_rank][to_file] = Some(piece);
-                self.board[from_rank][from_file] = None;
-                
-                self.board[captured_pawn_rank][captured_pawn_file] = None;
-                
-                self.halfmove_clock = 0;
-                
-                self.switch_turn();
-                
-                self.update_position_history();
-                
-                return true;
+                if from_rank == correct_en_passant_rank {
+                    let captured_pawn_rank = from_rank;
+                    let captured_pawn_file = to_file;
+                    
+                    self.update_hash_for_move(&piece, from, to);
+                    
+                    let captured_color = if piece.color == Color::White { BLACK } else { WHITE };
+                    let captured_square = captured_pawn_rank * 8 + captured_pawn_file;
+                    self.current_hash ^= ZOBRIST.piece_keys[captured_color][0][captured_square]; // Remove captured pawn
+                    
+                    piece.has_moved = true;
+                    self.board[to_rank][to_file] = Some(piece);
+                    self.board[from_rank][from_file] = None;
+                    
+                    self.board[captured_pawn_rank][captured_pawn_file] = None;
+                    
+                    self.halfmove_clock = 0;
+                    
+                    self.switch_turn();
+                    
+                    self.update_position_history();
+                    
+                    return true;
+                }
             }
             
             self.halfmove_clock += 1;
             
-            if piece.piece_type == PieceType::Pawn && !piece.has_moved && 
+            if piece.piece_type == PieceType::Pawn && 
                ((from_rank as isize - to_rank as isize).abs() == 2) {
                 let direction = if piece.color == Color::White { -1 } else { 1 };
                 let en_passant_rank = (from_rank as isize + direction) as usize;
@@ -489,15 +497,34 @@ impl GameState {
         let (from_rank, from_file) = from;
         let (to_rank, to_file) = to;
         
-        let piece_color = match temp_board.board[from_rank][from_file] {
-            Some(piece) => piece.color,
+        let piece = match temp_board.board[from_rank][from_file] {
+            Some(piece) => piece,
             None => return false, // No piece to move
         };
+        
+        // Check for en passant capture
+        if piece.piece_type == PieceType::Pawn && 
+           temp_board.en_passant_target == Some(to) && 
+           from_file != to_file &&
+           temp_board.board[to_rank][to_file].is_none() {
+            // Check that the pawn is on the correct rank for en passant
+            let correct_en_passant_rank = match piece.color {
+                Color::White => 3, // 5th rank (index 3)
+                Color::Black => 4, // 4th rank (index 4)
+            };
+            
+            if from_rank == correct_en_passant_rank {
+                // Remove the captured pawn in the simulation
+                let captured_pawn_rank = from_rank;
+                let captured_pawn_file = to_file;
+                temp_board.board[captured_pawn_rank][captured_pawn_file] = None;
+            }
+        }
         
         temp_board.board[to_rank][to_file] = temp_board.board[from_rank][from_file];
         temp_board.board[from_rank][from_file] = None;
         
-        temp_board.is_in_check(piece_color)
+        temp_board.is_in_check(piece.color)
     }
     
     pub fn is_checkmate(&self) -> bool {

@@ -53,7 +53,13 @@ impl Piece {
                 if new_rank < 8 && board[new_rank][file].is_none() {
                     moves.push((new_rank, file));
                     
-                    if !self.has_moved {
+                    // Check if pawn is on its starting rank
+                    let is_on_starting_rank = match self.color {
+                        Color::White => rank == 6, // 2nd rank from bottom (7th rank in chess notation)
+                        Color::Black => rank == 1, // 2nd rank from top (2nd rank in chess notation)
+                    };
+                    
+                    if is_on_starting_rank {
                         let double_rank = (rank as isize + 2 * direction) as usize;
                         if double_rank < 8 && board[double_rank][file].is_none() {
                             moves.push((double_rank, file));
@@ -66,22 +72,26 @@ impl Piece {
                     if new_file >= 0 && new_file < 8 {
                         let new_rank = (rank as isize + direction) as usize;
                         if new_rank < 8 {
-                            // Normal diagonal capture
+                            // Normal diagonal capture - ONLY if there's an opponent's piece
                             if let Some(piece) = board[new_rank][new_file as usize] {
                                 if piece.color != self.color {
                                     moves.push((new_rank, new_file as usize));
                                 }
                             }
-                            
-                            // En passant - check if there's an opponent's pawn adjacent that just moved two squares
-                            // The actual en passant logic is handled in the board.rs make_move function
-                            // This just adds the potential en passant capture as a possible move
-                            if board[new_rank][new_file as usize].is_none() && // Target square is empty
-                               board[rank][new_file as usize].is_some() && // Adjacent square has a piece
-                               board[rank][new_file as usize].unwrap().piece_type == PieceType::Pawn && // It's a pawn
-                               board[rank][new_file as usize].unwrap().color != self.color { // It's an opponent's pawn
-                                // The actual en passant validation will be done in make_move
-                                moves.push((new_rank, new_file as usize));
+                            // En passant capture - ONLY on the correct rank and with en_passant_target
+                            else {
+                                let en_passant_rank = match self.color {
+                                    Color::White => 3, // 5th rank for white pawns (index 3)
+                                    Color::Black => 4, // 4th rank for black pawns (index 4)
+                                };
+                                
+                                if rank == en_passant_rank && // Pawn is on the correct rank for en passant
+                                   board[rank][new_file as usize].is_some() && // Adjacent square has a piece
+                                   board[rank][new_file as usize].unwrap().piece_type == PieceType::Pawn && // It's a pawn
+                                   board[rank][new_file as usize].unwrap().color != self.color { // It's an opponent's pawn
+                                    // The actual en passant validation will be done in make_move
+                                    moves.push((new_rank, new_file as usize));
+                                }
                             }
                         }
                     }
