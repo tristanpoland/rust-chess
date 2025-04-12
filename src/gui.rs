@@ -399,14 +399,15 @@ impl ChessGui {
             "Create Game"
         );
         
-        let refresh_games_button = Button::new(
-            BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
-            BOARD_OFFSET_Y + 2.0 * (BUTTON_HEIGHT + BUTTON_MARGIN),
-            BUTTON_WIDTH,
-            BUTTON_HEIGHT,
-            "Refresh Games"
-       
-        let spectate_button = Button::new(
+    let refresh_games_button = Button::new(
+        BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
+        BOARD_OFFSET_Y + 2.0 * (BUTTON_HEIGHT + BUTTON_MARGIN),
+        BUTTON_WIDTH,
+        BUTTON_HEIGHT,
+        "Refresh Games"
+    );
+    
+    let spectate_button = Button::new(
             BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
             BOARD_OFFSET_Y + 3.0 * (BUTTON_HEIGHT + BUTTON_MARGIN),
             BUTTON_WIDTH,
@@ -1628,8 +1629,7 @@ impl ChessGui {
                             if let Err(e) = client.send_move((0, 0), (0, 0), Some(promotion_char)) {
                                 println!("Error sending promotion choice: {}", e);
                             }
-                            _ => unreachable!(),
-                        };
+                        }
                         
                         // Use the stored move information from when the promotion was triggered
                         if let Some(mut move_info) = self.pending_promotion_move.take() {
