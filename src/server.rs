@@ -286,13 +286,12 @@ impl Game {
             // Process spectator messages first
             let mut disconnected_spectators = Vec::new();
             
+            let mut chat_messages = Vec::new();
             for (id, spectator) in &mut self.spectators {
                 match spectator.receive_message() {
                     Ok(Some(NetworkMessage::ChatMessage { sender, message, is_spectator })) => {
-                        // Forward chat message to all clients
-                        if let Err(e) = self.handle_chat_message(sender, message, is_spectator) {
-                            println!("Error handling chat message: {}", e);
-                        }
+                        // Collect chat messages to handle later
+                        chat_messages.push((sender, message, is_spectator));
                     },
                     Ok(Some(_)) => {
                         // Ignore other messages from spectators
@@ -308,10 +307,17 @@ impl Game {
             }
             
             // Remove disconnected spectators
+            // Remove disconnected spectators
             for id in &disconnected_spectators {
                 self.spectators.remove(id);
             }
             
+            // Handle collected chat messages
+            for (sender, message, is_spectator) in chat_messages {
+                if let Err(e) = self.handle_chat_message(sender, message, is_spectator) {
+                    println!("Error handling chat message: {}", e);
+                }
+            }
             // Check if both players are still connected
             let white_connected = self.white_client.as_ref().map_or(false, |c| c.stream.is_some());
             let black_connected = self.black_client.as_ref().map_or(false, |c| c.stream.is_some());
@@ -364,6 +370,39 @@ impl Game {
 
             // Wait for move from current player
             match sender.receive_message() {
+                Ok(Some(NetworkMessage::ConnectionStatus { .. })) => {
+                    println!("Unexpected ConnectionStatus message during game");
+                },
+                Ok(Some(NetworkMessage::SpectateGame { .. })) => {
+                    println!("Unexpected SpectateGame message during game");
+                },
+                Ok(Some(NetworkMessage::SpectatorJoined { .. })) => {
+                    println!("Unexpected SpectatorJoined message from client");
+                },
+                Ok(Some(NetworkMessage::SpectatorLeft { .. })) => {
+                    println!("Unexpected SpectatorLeft message from client");
+                },
+                Ok(Some(NetworkMessage::Heartbeat)) => {
+                    // Respond to heartbeat with a heartbeat
+                    let heartbeat = NetworkMessage::Heartbeat;
+                    if let Some(stream) = &mut sender.stream {
+                        let serialized = format!("{}\n", serde_json::to_string(&heartbeat)?);
+                        if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                            println!("Error sending heartbeat: {}", e);
+                            break;
+                        }
+                    }
+                },
+
+                Ok(Some(NetworkMessage::ChatMessage { sender, message, is_spectator })) => {
+                    // Handle chat message from player
+                    if let Err(e) = self.handle_chat_message(sender, message, is_spectator) {
+                        println!("Error handling chat message: {}", e);
+                    }
+                }
+
+                
+
                 Ok(Some(NetworkMessage::Move { from, to, promotion })) => {
                     let from = (from.0 as usize, from.1 as usize);
                     let to = (to.0 as usize, to.1 as usize);
@@ -396,12 +435,6 @@ impl Game {
                         }
                     }
                 }
-                Ok(Some(NetworkMessage::ChatMessage { sender, message, is_spectator })) => {
-                    // Handle chat message from player
-                    if let Err(e) = self.handle_chat_message(sender, message, is_spectator) {
-                        println!("Error handling chat message: {}", e);
-                    }
-                }
                 Ok(Some(NetworkMessage::OfferDraw)) => {
                     // Forward draw offer to the other player
                     let draw_offer = NetworkMessage::DrawOffered;
@@ -429,14 +462,6 @@ impl Game {
                             }
                         }
                     }
-                    
-                    // Log in chat
-                    let player = if current_turn { "White" } else { "Black" };
-                    self.handle_chat_message(
-                        "System".to_string(),
-                        format!("{} player offered a draw", player),
-                        true
-                    )?;
                 }
                 Ok(Some(NetworkMessage::AcceptDraw)) => {
                     // Forward draw acceptance to both players
@@ -462,19 +487,27 @@ impl Game {
                         }
                     }
                     
-                    // Log in chat
-                    let player = if current_turn { "White" } else { "Black" };
-                    self.handle_chat_message(
-                        "System".to_string(),
-                        format!("{} player accepted the draw offer", player),
-                        true
-                    )?;
-                    
                     // End the game
                     let end_message = NetworkMessage::GameEnd { reason: "Draw agreed".to_string() };
                     let serialized = format!("{}\n", serde_json::to_string(&end_message)?);
                     
-                    self.broadcast_message(&end_message)?;
+                    if let Some(white_client) = &mut self.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to white client: {}", e);
+                                white_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    if let Some(black_client) = &mut self.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to black client: {}", e);
+                                black_client.stream = None;
+                            }
+                        }
+                    }
                     
                     self.status = GameStatus::Completed;
                     self.game_state.game_over = true;
@@ -507,34 +540,60 @@ impl Game {
                             }
                         }
                     }
-                    
-                    // Log in chat
-                    let player = if current_turn { "White" } else { "Black" };
-                    self.handle_chat_message(
-                        "System".to_string(),
-                        format!("{} player declined the draw offer", player),
-                        true
-                    )?;
                 }
                 Ok(Some(NetworkMessage::Resign)) => {
                     // Handle resignation
                     let resigner_color = if current_turn { "White" } else { "Black" };
                     let reason = format!("{} resigned", resigner_color);
                     
-                    // Log in chat
-                    self.handle_chat_message(
-                        "System".to_string(),
-                        format!("{} player resigned", resigner_color),
-                        true
-                    )?;
-                    
-                    // Forward resignation to all clients
+                    // Forward resignation to both players
                     let resign_message = NetworkMessage::Resign;
-                    self.broadcast_message(&resign_message)?;
+                    let serialized = format!("{}\n", serde_json::to_string(&resign_message)?);
                     
-                    // Send game end message to all
+                    // For non-resigning player
+                    if current_turn {
+                        // White resigned, send to black
+                        if let Some(black_client) = &mut self.black_client {
+                            if let Some(stream) = &mut black_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending resignation to black client: {}", e);
+                                    black_client.stream = None;
+                                }
+                            }
+                        }
+                    } else {
+                        // Black resigned, send to white
+                        if let Some(white_client) = &mut self.white_client {
+                            if let Some(stream) = &mut white_client.stream {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                    println!("Error sending resignation to white client: {}", e);
+                                    white_client.stream = None;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Send game end message to both
                     let end_message = NetworkMessage::GameEnd { reason };
-                    self.broadcast_message(&end_message)?;
+                    let serialized = format!("{}\n", serde_json::to_string(&end_message)?);
+                    
+                    if let Some(white_client) = &mut self.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to white client: {}", e);
+                                white_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    if let Some(black_client) = &mut self.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to black client: {}", e);
+                                black_client.stream = None;
+                            }
+                        }
+                    }
                     
                     self.status = GameStatus::Completed;
                     self.game_state.game_over = true;
@@ -543,13 +602,13 @@ impl Game {
                 Ok(Some(NetworkMessage::RequestRematch)) => {
                     // Forward rematch request to the other player
                     let rematch_request = NetworkMessage::RequestRematch;
+                    let serialized = format!("{}\n", serde_json::to_string(&rematch_request)?);
                     
                     if current_turn {
                         // White is requesting a rematch, send to black
                         if let Some(black_client) = &mut self.black_client {
                             if let Some(stream) = &mut black_client.stream {
-                                if let Err(e) = stream.write_all(format!("{}\n", 
-                                                serde_json::to_string(&rematch_request)?).as_bytes()) {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
                                     println!("Error sending rematch request to black client: {}", e);
                                     black_client.stream = None;
                                 }
@@ -559,37 +618,94 @@ impl Game {
                         // Black is requesting a rematch, send to white
                         if let Some(white_client) = &mut self.white_client {
                             if let Some(stream) = &mut white_client.stream {
-                                if let Err(e) = stream.write_all(format!("{}\n", 
-                                                serde_json::to_string(&rematch_request)?).as_bytes()) {
+                                if let Err(e) = stream.write_all(serialized.as_bytes()) {
                                     println!("Error sending rematch request to white client: {}", e);
                                     white_client.stream = None;
                                 }
                             }
                         }
                     }
+                }
+                Ok(Some(NetworkMessage::RematchAccepted { .. })) => {
+                    // This message should come from a client accepting a rematch
+                    println!("Received RematchAccepted message from client, ignoring");
+                    // The actual rematch handling happens in the main game loop after the game ends
+                }
+                Ok(Some(NetworkMessage::DrawOffered)) => {
+                    // This message should come from the server to clients, not from clients
+                    println!("Received unexpected DrawOffered message from client, ignoring");
+                }
+                Ok(Some(NetworkMessage::GameStart { .. })) => {
+                    // Ignore GameStart messages after initial setup
+                    println!("Received unexpected GameStart message");
+                }
+                Ok(Some(NetworkMessage::GameState { .. })) => {
+                    // Ignore GameState messages from clients
+                    println!("Received unexpected GameState message");
+                }
+                Ok(Some(NetworkMessage::GameEnd { reason })) => {
+                    // Forward game end to both players
+                    let end_message = NetworkMessage::GameEnd { reason: reason.clone() };
+                    let serialized = format!("{}\n", serde_json::to_string(&end_message)?);
                     
-                    // Log in chat
-                    let player = if current_turn { "White" } else { "Black" };
-                    self.handle_chat_message(
-                        "System".to_string(),
-                        format!("{} player requested a rematch", player),
-                        true
-                    )?;
+                    if let Some(white_client) = &mut self.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to white client: {}", e);
+                                white_client.stream = None;
+                            }
+                        }
+                    }
+                    
+                    if let Some(black_client) = &mut self.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                                println!("Error sending game end to black client: {}", e);
+                                black_client.stream = None;
+                            }
+                        }
+                    }
+                    self.status = GameStatus::Completed;
+                    break;
+                }
+                Ok(Some(NetworkMessage::CreateGame { .. })) => {
+                    // Ignore CreateGame messages during game
+                    println!("Received unexpected CreateGame message");
+                }
+                Ok(Some(NetworkMessage::JoinGame { .. })) => {
+                    // Ignore JoinGame messages during game
+                    println!("Received unexpected JoinGame message");
+                }
+                Ok(Some(NetworkMessage::GameCreated { .. })) => {
+                    // Ignore GameCreated messages during game
+                    println!("Received unexpected GameCreated message");
+                }
+                Ok(Some(NetworkMessage::GameList { .. })) => {
+                    // Ignore GameList messages during game
+                    println!("Received unexpected GameList message");
+                }
+                Ok(Some(NetworkMessage::RequestGameList)) => {
+                    // Ignore RequestGameList messages during game
+                    println!("Received unexpected RequestGameList message");
                 }
                 Ok(None) => {
-                    // No message received, sleep briefly
-                    thread::sleep(Duration::from_millis(10));
+                    // No message received, continue
                 }
                 Err(e) => {
                     println!("Error receiving message: {}", e);
-                    // Handle disconnect
-                    if current_turn {
-                        if let Some(white_client) = &mut self.white_client {
-                            white_client.stream = None;
-                        }
-                    } else {
-                        if let Some(black_client) = &mut self.black_client {
-                            black_client.stream = None;
+                    if e.kind() == std::io::ErrorKind::ConnectionAborted || 
+                       e.kind() == std::io::ErrorKind::ConnectionReset {
+                        println!("Client disconnected");
+                        if current_turn {
+                            // White disconnected
+                            if let Some(white_client) = &mut self.white_client {
+                                white_client.stream = None;
+                            }
+                        } else {
+                            // Black disconnected
+                            if let Some(black_client) = &mut self.black_client {
+                                black_client.stream = None;
+                            }
                         }
                     }
                 }
@@ -598,33 +714,39 @@ impl Game {
             // Check if game is over
             if self.game_state.is_game_over() {
                 let reason = if self.game_state.is_checkmate() {
-                    if self.game_state.current_turn == Color::White {
-                        "Black wins by checkmate"
-                    } else {
-                        "White wins by checkmate"
-                    }
+                    "Checkmate"
                 } else if self.game_state.is_stalemate() {
-                    "Draw by stalemate"
+                    "Stalemate"
                 } else if self.game_state.is_threefold_repetition() {
-                    "Draw by threefold repetition"
+                    "Threefold repetition"
                 } else if self.game_state.is_fifty_move_rule() {
-                    "Draw by fifty-move rule"
+                    "Fifty-move rule"
                 } else if self.game_state.is_insufficient_material() {
-                    "Draw by insufficient material"
+                    "Insufficient material"
                 } else {
-                    "Game over"
+                    "Unknown"
                 };
                 
-                // Log in chat
-                self.handle_chat_message(
-                    "System".to_string(),
-                    reason.to_string(),
-                    true
-                )?;
-                
                 let end_message = NetworkMessage::GameEnd { reason: reason.to_string() };
-                self.broadcast_message(&end_message)?;
+                let serialized = format!("{}\n", serde_json::to_string(&end_message)?);
                 
+                if let Some(white_client) = &mut self.white_client {
+                    if let Some(stream) = &mut white_client.stream {
+                        if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                            println!("Error sending game end to white client: {}", e);
+                            white_client.stream = None;
+                        }
+                    }
+                }
+                
+                if let Some(black_client) = &mut self.black_client {
+                    if let Some(stream) = &mut black_client.stream {
+                        if let Err(e) = stream.write_all(serialized.as_bytes()) {
+                            println!("Error sending game end to black client: {}", e);
+                            black_client.stream = None;
+                        }
+                    }
+                }
                 self.status = GameStatus::Completed;
                 break;
             }

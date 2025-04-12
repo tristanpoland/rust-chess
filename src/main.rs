@@ -6,7 +6,7 @@ use std::env;
 use std::thread;
 use std::io::{self, Write};
 mod embedded_assets;
-pub use embedded_assets;
+mod piece;
 use chess::gui::ChessGui;
 
 enum GameMode {
