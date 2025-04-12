@@ -83,7 +83,7 @@ pub struct GameInfo {
     pub game_id: String,
     pub host_name: String,
     pub status: GameStatus,
-    pub player_count: u8,
+    pub player_count: Option<u8>, // Make it optional
     pub spectator_count: u8,
     pub created_at: u64, // timestamp
 }

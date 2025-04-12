@@ -1813,7 +1813,7 @@ impl ChessGui {
                     self.available_games = available_games;
                     println!("Available games:");
                     for (i, game) in self.available_games.iter().enumerate() {
-                        println!("{}. {} (hosted by {}) - Status: {:?}, Players: {}, Spectators: {}", 
+                        println!("{}. {} (hosted by {}) - Status: {:?}, Players: {:?}, Spectators: {:?}", 
                                  i + 1, game.game_id, game.host_name, game.status,
                                  game.player_count, game.spectator_count);
                     }

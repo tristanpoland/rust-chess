@@ -825,11 +825,18 @@ impl Game {
     fn player_count(&self) -> u8 {
         let mut count = 0;
         if self.white_client.is_some() {
+            println!("White client is connected.");
             count += 1;
+        } else {
+            println!("White client is not connected.");
         }
         if self.black_client.is_some() {
+            println!("Black client is connected.");
             count += 1;
+        } else {
+            println!("Black client is not connected.");
         }
+        println!("Total player count: {}", count);
         count
     }
     
@@ -868,7 +875,7 @@ impl ChessServer {
                 game_id: game.id.clone(),
                 host_name: game.host_name.clone(),
                 status: game.status.clone(),
-                player_count: game.player_count(),
+                player_count: Some(game.player_count()),
                 spectator_count: game.spectator_count(),
                 created_at: game.created_at,
             })
@@ -900,8 +907,7 @@ impl ChessServer {
         }
         
         // Remove inactive games
-        for game_id in games_to_remove {
-            println!("Removing inactive game: {}", game_id);
+        for game_id in games_to_re          println!("Removing inactive game: {}", game_id);
             games.remove(&game_id);
         }
     }
