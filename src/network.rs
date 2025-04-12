@@ -19,6 +19,7 @@ pub enum NetworkMessage {
     GameStart {
         is_white: bool,
         game_id: String,
+        opponent_name: String,
     },
     GameEnd {
         reason: String,
@@ -108,6 +109,7 @@ pub struct ChessClient {
     server_address: String,
     last_heartbeat: Instant,
     connection_id: String,
+    pub player_name: String,
 }
 
 impl ChessClient {
@@ -124,6 +126,7 @@ impl ChessClient {
             server_address: server_address.to_string(),
             last_heartbeat: Instant::now(),
             connection_id,
+            player_name: String::new(),
         })
     }
 
@@ -155,6 +158,7 @@ impl ChessClient {
             server_address: server_address.to_string(),
             last_heartbeat: Instant::now(),
             connection_id,
+            player_name: String::new(),
         }
     }
 
@@ -367,4 +371,41 @@ impl ChessServer {
         listener.set_nonblocking(true)?;
         Ok(Self { listener })
     }
-}
+
+    pub fn accept_connections(&self) -> Result<(ChessClient, ChessClient), std::io::Error> {
+        println!("Waiting for players to connect...");
+        
+        // Accept first player
+        let (stream1, _) = self.listener.accept()?;
+        println!("First player connected");
+        
+        // Accept second player
+        let (stream2, _) = self.listener.accept()?;
+        println!("Second player connected");
+
+        // Create clients and assign colors
+        let mut client1 = ChessClient {
+            stream: Some(stream1),
+            is_white: true,
+            buffer: Vec::new(),
+            server_address: "".to_string(),
+            player_name: String::new(),
+        };
+        let mut client2 = ChessClient {
+            stream: Some(stream2),
+            is_white: false,
+            buffer: Vec::new(),
+            server_address: "".to_string(),
+            player_name: String::new(),
+        };
+
+        // Send color assignments
+        let message1 = NetworkMessage::GameStart { is_white: true, game_id: "".to_string(), opponent_name: "".to_string() };
+        let message2 = NetworkMessage::GameStart { is_white: false, game_id: "".to_string(), opponent_name: "".to_string() };
+        
+        client1.stream.as_mut().unwrap().write_all(serde_json::to_string(&message1)?.as_bytes())?;
+        client2.stream.as_mut().unwrap().write_all(serde_json::to_string(&message2)?.as_bytes())?;
+
+        Ok((client1, client2))
+    }
+} 

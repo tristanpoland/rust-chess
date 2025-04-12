@@ -963,10 +963,13 @@ impl ChessServer {
                         match client.receive_message() {
                             Ok(Some(NetworkMessage::CreateGame { player_name })) => {
                                 let game_id = Uuid::new_v4().to_string();
+                                let player_name_clone = player_name.clone();
                                 let mut game = Game::new(game_id.clone(), player_name);
                                 
                                 // First player is white
                                 client.set_role(ClientRole::Player { is_white: true });
+                                client.is_white = true;
+                                client.player_name = player_name_clone.clone();
                                 game.white_client = Some(client);
                                 
                                 // Send game created confirmation
@@ -1015,6 +1018,20 @@ impl ChessServer {
                                                 let message = NetworkMessage::GameStart { 
                                                     is_white: true, 
                                                     game_id: game_id_clone.clone() 
+                                            // Store the player names for messaging
+                                            let host_name = game.host_name.clone();
+                                            let joiner_name = if let Some(black_client) = &game.black_client {
+                                                black_client.player_name.clone()
+                                            } else {
+                                                "Opponent".to_string()
+                                            };
+                                            
+                                            // Send game start messages with correct opponent names
+                                            if let Some(white_client) = &mut game.white_client {
+                                                let message = NetworkMessage::GameStart { 
+                                                    is_white: true, 
+                                                    game_id: game_id_clone.clone(),
+                                                    opponent_name: joiner_name.clone(),
                                                 };
                                                 if let Some(stream) = &mut white_client.stream {
                                                     if let Err(e) = stream.write_all(format!("{}\n", 
@@ -1029,6 +1046,8 @@ impl ChessServer {
                                                 let message = NetworkMessage::GameStart { 
                                                     is_white: false, 
                                                     game_id: game_id_clone.clone() 
+                                                    game_id: game_id_clone.clone(),
+                                                    opponent_name: host_name,
                                                 };
                                                 if let Some(stream) = &mut black_client.stream {
                                                     if let Err(e) = stream.write_all(format!("{}\n", 
@@ -1152,6 +1171,9 @@ impl ChessServer {
                                     if game.status == GameStatus::Waiting && game.black_client.is_none() {
                                         println!("{} joined game {}", player_name, game_id);
                                         
+                                        // Store the host name
+                                        let host_name = game.host_name.clone();
+                                        
                                         // Second player is black
                                         client.set_role(ClientRole::Player { is_white: false });
                                         game.black_client = Some(client);
@@ -1162,6 +1184,38 @@ impl ChessServer {
                                             format!("{} joined as black", player_name),
                                             true
                                         ));
+                                        client.is_white = false;
+                                        client.player_name = player_name.clone();
+                                        game.black_client = Some(client);
+                                        
+                                        // Send game start messages to both clients with correct opponent names
+                                        if let Some(white_client) = &mut game.white_client {
+                                            let message = NetworkMessage::GameStart {
+                                                is_white: true,
+                                                game_id: game_id.clone(),
+                                                opponent_name: player_name.clone(),
+                                            };
+                                            if let Some(stream) = &mut white_client.stream {
+                                                if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message).unwrap()).as_bytes()) {
+                                                    println!("Error sending game start to white client: {}", e);
+                                                    white_client.stream = None;
+                                                }
+                                            }
+                                        }
+                                        
+                                        if let Some(black_client) = &mut game.black_client {
+                                            let message = NetworkMessage::GameStart {
+                                                is_white: false,
+                                                game_id: game_id.clone(),
+                                                opponent_name: host_name,
+                                            };
+                                            if let Some(stream) = &mut black_client.stream {
+                                                if let Err(e) = stream.write_all(format!("{}\n", serde_json::to_string(&message).unwrap()).as_bytes()) {
+                                                    println!("Error sending game start to black client: {}", e);
+                                                    black_client.stream = None;
+                                                }
+                                            }
+                                        }
                                         
                                         break;
                                     } else {
@@ -1231,4 +1285,111 @@ impl ChessServer {
             }
         }
     }
-}
+
+    fn handle_join_game(&mut self, client: ChessClient, game_id: String, player_name: String) -> Result<(), std::io::Error> {
+        let mut games = self.games.lock().unwrap();
+        
+        if let Some(game) = games.get_mut(&game_id) {
+            if game.white_client.is_some() && game.black_client.is_some() {
+                println!("Game {} is already full", game_id);
+                return Ok(());
+            }
+            
+            if game.white_client.is_none() {
+                // Assign the client as white
+                let mut white_client = client;
+                white_client.player_name = player_name.clone();
+                game.white_client = Some(white_client);
+                game.status = GameStatus::InProgress;
+                
+                // If black is already assigned, start the game
+                if let Some(black_client) = &mut game.black_client {
+                    // Send game start messages to both players
+                    let white_message = NetworkMessage::GameStart { 
+                        is_white: true, 
+                        game_id: game_id.clone(),
+                        opponent_name: black_client.player_name.clone(),
+                    };
+                    
+                    let black_message = NetworkMessage::GameStart { 
+                        is_white: false, 
+                        game_id: game_id.clone(),
+                        opponent_name: player_name.clone(),
+                    };
+                    
+                    if let Some(white_client) = &mut game.white_client {
+                        if let Some(stream) = &mut white_client.stream {
+                            stream.write_all(format!("{}\n", serde_json::to_string(&white_message)?).as_bytes())?;
+                        }
+                    }
+                    
+                    if let Some(stream) = &mut black_client.stream {
+                        stream.write_all(format!("{}\n", serde_json::to_string(&black_message)?).as_bytes())?;
+                    }
+                    
+                    // Start the game in a new thread
+                    let game_id_clone = game_id.clone();
+                    let games_clone = Arc::clone(&self.games);
+                    thread::spawn(move || {
+                        let mut games = games_clone.lock().unwrap();
+                        if let Some(game) = games.get_mut(&game_id_clone) {
+                            if let Err(e) = game.run() {
+                                println!("Error running game {}: {}", game_id_clone, e);
+                            }
+                        }
+                    });
+                }
+            } else if game.black_client.is_none() {
+                // Assign the client as black
+                let mut black_client = client;
+                black_client.player_name = player_name.clone();
+                game.black_client = Some(black_client);
+                game.status = GameStatus::InProgress;
+                
+                // If white is already assigned, start the game
+                if let Some(white_client) = &mut game.white_client {
+                    // Send game start messages to both players
+                    let white_message = NetworkMessage::GameStart { 
+                        is_white: true, 
+                        game_id: game_id.clone(),
+                        opponent_name: player_name.clone(),
+                    };
+                    
+                    let black_message = NetworkMessage::GameStart { 
+                        is_white: false, 
+                        game_id: game_id.clone(),
+                        opponent_name: white_client.player_name.clone(),
+                    };
+                    
+                    if let Some(stream) = &mut white_client.stream {
+                        stream.write_all(format!("{}\n", serde_json::to_string(&white_message)?).as_bytes())?;
+                    }
+                    
+                    if let Some(black_client) = &mut game.black_client {
+                        if let Some(stream) = &mut black_client.stream {
+                            stream.write_all(format!("{}\n", serde_json::to_string(&black_message)?).as_bytes())?;
+                        }
+                    }
+                    
+                    // Start the game in a new thread
+                    let game_id_clone = game_id.clone();
+                    let games_clone = Arc::clone(&self.games);
+                    thread::spawn(move || {
+                        let mut games = games_clone.lock().unwrap();
+                        if let Some(game) = games.get_mut(&game_id_clone) {
+                            if let Err(e) = game.run() {
+                                println!("Error running game {}: {}", game_id_clone, e);
+                            }
+                        }
+                    });
+                }
+            }
+            
+            println!("Player '{}' joined game {}", player_name, game_id);
+        } else {
+            println!("Game {} not found", game_id);
+        }
+        
+        Ok(())
+    }
+} 
