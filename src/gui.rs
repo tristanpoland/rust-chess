@@ -26,13 +26,14 @@ const ACCEPT_BUTTON_HOVER: GgezColor = GgezColor::new(0.4, 0.7, 0.4, 1.0);
 const DECLINE_BUTTON_BG: GgezColor = GgezColor::new(0.6, 0.3, 0.3, 1.0);
 const DECLINE_BUTTON_HOVER: GgezColor = GgezColor::new(0.7, 0.4, 0.4, 1.0);
 
-const BUTTON_WIDTH: f32 = 120.0;
+const BUTTON_WIDTH: f32 = 150.0;
 const BUTTON_HEIGHT: f32 = 30.0;
 const BUTTON_MARGIN: f32 = 20.0;
 const DIALOG_WIDTH: f32 = 300.0;
 const DIALOG_HEIGHT: f32 = 150.0;
 const DIALOG_BUTTON_WIDTH: f32 = 100.0;
 const DIALOG_BUTTON_HEIGHT: f32 = 30.0;
+const MAX_TEXT_LENGTH: usize = 15;
 
 pub struct Button {
     rect: Rect,
@@ -76,7 +77,9 @@ impl Button {
         )?;
         canvas.draw(&mesh, DrawParam::default());
         
-        let text = Text::new(&self.text);
+        // Truncate text if needed
+        let display_text = truncate_text(&self.text, MAX_TEXT_LENGTH);
+        let text = Text::new(display_text);
         
         let dest = Point2 {
             x: self.rect.x + (self.rect.w / 2.0),
@@ -114,6 +117,7 @@ pub struct ChessGui {
     network_client: Option<ChessClient>,
     game_id: Option<String>,
     player_name: String,
+    opponent_name: String,
     available_games: Vec<GameInfo>,
     // Network buttons
     connect_button: Button,
@@ -202,6 +206,7 @@ impl ChessGui {
             network_client: None,
             game_id: None,
             player_name: String::new(),
+            opponent_name: String::new(),
             available_games: Vec::new(),
             connect_button,
             create_game_button,
@@ -301,97 +306,47 @@ impl ChessGui {
             self.create_game_button.draw(ctx, &mut canvas)?;
             self.refresh_games_button.draw(ctx, &mut canvas)?;
             
-            // Draw connection status
-            let connection_status = if self.network_client.as_ref().map_or(false, |c| c.is_connected()) {
-                "Connected"
-            } else {
-                "Disconnected"
-            };
-            
-            let status_text = Text::new(connection_status);
-            canvas.draw(
-                &status_text,
-                DrawParam::default()
-                    .dest(Point2 {
-                        x: BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
-                        y: BOARD_OFFSET_Y + 3.0 * (BUTTON_HEIGHT + BUTTON_MARGIN),
-                    })
-                    .color(if connection_status == "Connected" { GgezColor::GREEN } else { GgezColor::RED })
-            );
-            
-            // Draw game list if it's visible
+            // Draw join game buttons if showing game list
             if self.show_game_list {
-                // Draw game list background
-                let list_y = BOARD_OFFSET_Y + 4.0 * (BUTTON_HEIGHT + BUTTON_MARGIN);
-                let list_width = BUTTON_WIDTH;
-                let list_height = self.available_games.len() as f32 * (BUTTON_HEIGHT + 5.0);
-                
-                if !self.available_games.is_empty() {
-                    let list_rect = Rect::new(
-                        BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
-                        list_y,
-                        list_width,
-                        list_height
-                    );
-                    
-                    let list_bg = graphics::Mesh::new_rectangle(
-                        ctx,
-                        graphics::DrawMode::fill(),
-                        list_rect,
-                        GgezColor::new(0.2, 0.2, 0.3, 1.0),
-                    )?;
-                    canvas.draw(&list_bg, DrawParam::default());
-                    
-                    // Draw game list items
-                    for (_i, button) in self.join_game_buttons.iter().enumerate() {
-                        button.draw(ctx, &mut canvas)?;
-                    }
-                } else {
-                    // Draw "No games available" message
-                    let no_games_text = Text::new("No games available");
-                    canvas.draw(
-                        &no_games_text,
-                        DrawParam::default()
-                            .dest(Point2 {
-                                x: BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
-                                y: list_y,
-                            })
-                            .color(GgezColor::WHITE)
-                    );
+                for button in &self.join_game_buttons {
+                    button.draw(ctx, &mut canvas)?;
                 }
             }
             
-            // Draw game action buttons when appropriate
+            // Draw game buttons (draw, resign, rematch)
             if self.is_network_game {
                 if !self.game_over {
-                    // During active game, show draw offer and resign buttons
                     self.offer_draw_button.draw(ctx, &mut canvas)?;
                     self.resign_button.draw(ctx, &mut canvas)?;
                 } else {
-                    // When game is over, show rematch button
                     self.rematch_button.draw(ctx, &mut canvas)?;
-                }
-                
-                // If a draw has been offered to us, show dialog
-                if self.draw_offered && !self.game_over {
-                    self.draw_draw_offer_dialog(ctx, &mut canvas)?;
-                }
-                
-                // If a rematch has been offered to us, show dialog
-                if self.rematch_offered && self.game_over {
-                    self.draw_rematch_offer_dialog(ctx, &mut canvas)?;
                 }
             }
         }
         
+        // Draw promotion dialog if needed
         if self.game_state.promotion_pending.is_some() {
             self.draw_promotion_dialog(ctx, &mut canvas)?;
+        }
+        
+        // Draw draw offer dialog if needed
+        if self.draw_offered && !self.game_over {
+            self.draw_draw_offer_dialog(ctx, &mut canvas)?;
+        }
+        
+        // Draw rematch offer dialog if needed
+        if self.rematch_offered && self.game_over {
+            self.draw_rematch_offer_dialog(ctx, &mut canvas)?;
+        }
+        
+        // Draw player names in network games
+        if self.is_network_game {
+            self.draw_player_names(&mut canvas)?;
         }
         
         canvas.finish(ctx)?;
         
         self.needs_redraw = false;
-        
         Ok(())
     }
     
@@ -1345,10 +1300,13 @@ impl ChessGui {
                 Ok(Some(NetworkMessage::Move { from, to, promotion })) => {
                     self.handle_network_move(from, to, promotion)?;
                 }
-                Ok(Some(NetworkMessage::GameStart { is_white, game_id })) => {
+                Ok(Some(NetworkMessage::GameStart { is_white, game_id, opponent_name })) => {
                     self.set_player_color(is_white);
                     self.game_id = Some(game_id.clone());
-                    println!("Game started! You are playing as {}", if is_white { "white" } else { "black" });
+                    self.opponent_name = opponent_name;
+                    println!("Game started! You are playing as {} against {}", 
+                        if is_white { "white" } else { "black" },
+                        if !self.opponent_name.is_empty() { &self.opponent_name } else { "an opponent" });
                 }
                 Ok(Some(NetworkMessage::GameState { board, current_turn, promotion_pending, game_over })) => {
                     self.update_game_state(board, current_turn, promotion_pending, game_over)?;
@@ -1365,12 +1323,10 @@ impl ChessGui {
                 }
                 Ok(Some(NetworkMessage::GameList { available_games })) => {
                     self.available_games = available_games;
-                    println!("Available games:");
-                    for (i, game) in self.available_games.iter().enumerate() {
-                        println!("{}. {} (hosted by {})", i + 1, game.game_id, game.host_name);
-                    }
-                    // Update join game buttons after receiving new game list
+                    println!("Received game list with {} games", self.available_games.len());
+                    
                     self.update_join_game_buttons();
+                    
                     self.needs_redraw = true;
                 }
                 Ok(Some(NetworkMessage::DrawOffered)) => {
@@ -1379,12 +1335,26 @@ impl ChessGui {
                     self.needs_redraw = true;
                 }
                 Ok(Some(NetworkMessage::AcceptDraw)) => {
-                    println!("Your opponent has accepted your draw offer");
+                    println!("Draw accepted - game over");
                     self.game_over = true;
                     self.needs_redraw = true;
                 }
                 Ok(Some(NetworkMessage::DeclineDraw)) => {
-                    println!("Your opponent has declined your draw offer");
+                    println!("Draw declined - game continues");
+                    self.draw_offered = false;
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::RematchAccepted { is_white })) => {
+                    println!("Rematch accepted! You are playing as {}", if is_white { "white" } else { "black" });
+                    self.set_player_color(is_white);
+                    self.game_over = false;
+                    self.rematch_offered = false;
+                    self.game_state = GameState::new();
+                    self.needs_redraw = true;
+                }
+                Ok(Some(NetworkMessage::RequestRematch)) => {
+                    println!("Your opponent has requested a rematch");
+                    self.rematch_offered = true;
                     self.needs_redraw = true;
                 }
                 Ok(Some(NetworkMessage::Resign)) => {
@@ -1392,39 +1362,27 @@ impl ChessGui {
                     self.game_over = true;
                     self.needs_redraw = true;
                 }
-                Ok(Some(NetworkMessage::RequestRematch)) => {
-                    println!("Your opponent wants to play again");
-                    self.rematch_offered = true;
-                    self.needs_redraw = true;
-                }
-                Ok(Some(NetworkMessage::RematchAccepted { is_white })) => {
-                    println!("Rematch accepted! You are playing as {}", if is_white { "white" } else { "black" });
-                    // The server will send a new GameState message to set up the board
-                    self.game_over = false;
-                    self.set_player_color(is_white);
-                    self.needs_redraw = true;
-                }
                 Ok(Some(NetworkMessage::CreateGame { .. })) => {
-                    // Ignore unexpected CreateGame messages from server
-                    println!("Received unexpected CreateGame message");
+                    // Ignore unexpected CreateGame messages from client
                 }
                 Ok(Some(NetworkMessage::JoinGame { .. })) => {
-                    // Ignore unexpected JoinGame messages from server
-                    println!("Received unexpected JoinGame message");
+                    // Ignore unexpected JoinGame messages from client
                 }
                 Ok(Some(NetworkMessage::RequestGameList)) => {
-                    // Ignore unexpected RequestGameList messages from server
-                    println!("Received unexpected RequestGameList message");
+                    // Ignore unexpected RequestGameList messages from client
                 }
                 Ok(Some(NetworkMessage::OfferDraw)) => {
-                    // Ignore unexpected OfferDraw messages from server - should receive DrawOffered instead
-                    println!("Received unexpected direct OfferDraw message");
+                    // Ignore unexpected OfferDraw messages from client
                 }
                 Ok(None) => {
-                    // No message received, continue
+                    // No message available, continue
                 }
                 Err(e) => {
                     println!("Network error: {}", e);
+                }
+                _ => {
+                    // Catch-all for any other message variants that might be added in the future
+                    println!("Received unexpected network message");
                 }
             }
         }
@@ -1452,7 +1410,8 @@ impl ChessGui {
         
         for (i, game) in self.available_games.iter().enumerate() {
             let y = base_y + i as f32 * (BUTTON_HEIGHT + 5.0);
-            let button_text = format!("Join: {}", game.host_name);
+            // Truncate the host name if needed
+            let button_text = format!("Join: {}", truncate_text(&game.host_name, MAX_TEXT_LENGTH - 6));
             
             let button = Button::new(
                 BOARD_OFFSET_X + (BOARD_SIZE as f32) * SQUARE_SIZE + BUTTON_MARGIN,
@@ -1515,5 +1474,61 @@ impl ChessGui {
             }
         }
         Ok(())
+    }
+
+    fn draw_player_names(&self, canvas: &mut Canvas) -> GameResult<()> {
+        let board_width = SQUARE_SIZE * 8.0;
+        
+        // Draw player names based on board orientation
+        let (top_name, bottom_name) = if self.is_inverted_board() {
+            // If playing as black, player name is at the bottom
+            (self.opponent_name.clone(), self.player_name.clone())
+        } else {
+            // If playing as white, player name is at the bottom
+            (self.player_name.clone(), self.opponent_name.clone())
+        };
+        
+        // Format the names with colors, truncate if necessary
+        let top_player = format!("White: {}", 
+            truncate_text(if !top_name.is_empty() { &top_name } else { "Unknown" }, MAX_TEXT_LENGTH));
+        let bottom_player = format!("Black: {}", 
+            truncate_text(if !bottom_name.is_empty() { &bottom_name } else { "Unknown" }, MAX_TEXT_LENGTH));
+        
+        // Draw the name above the board
+        let top_text = Text::new(top_player);
+        canvas.draw(
+            &top_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: BOARD_OFFSET_X + board_width / 2.0,
+                    y: BOARD_OFFSET_Y - 20.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        // Draw the name below the board
+        let bottom_text = Text::new(bottom_player);
+        canvas.draw(
+            &bottom_text,
+            DrawParam::default()
+                .dest(Point2 {
+                    x: BOARD_OFFSET_X + board_width / 2.0,
+                    y: BOARD_OFFSET_Y + board_width + 20.0,
+                })
+                .offset(Point2 { x: 0.5, y: 0.5 })
+                .color(GgezColor::WHITE)
+        );
+        
+        Ok(())
+    }
+}
+
+// Helper function to truncate text to specified length
+fn truncate_text(text: &str, max_length: usize) -> String {
+    if text.len() <= max_length {
+        text.to_string()
+    } else {
+        format!("{}...", &text[0..max_length-3])
     }
 } 

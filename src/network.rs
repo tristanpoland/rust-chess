@@ -14,6 +14,7 @@ pub enum NetworkMessage {
     GameStart {
         is_white: bool,
         game_id: String,
+        opponent_name: String,
     },
     GameEnd {
         reason: String,
@@ -68,6 +69,7 @@ pub struct ChessClient {
     pub is_white: bool,
     buffer: Vec<u8>,
     server_address: String,
+    pub player_name: String,
 }
 
 impl ChessClient {
@@ -79,6 +81,7 @@ impl ChessClient {
             is_white: false,
             buffer: Vec::new(),
             server_address: server_address.to_string(),
+            player_name: String::new(),
         })
     }
 
@@ -88,6 +91,7 @@ impl ChessClient {
             is_white,
             buffer: Vec::new(),
             server_address: server_address.to_string(),
+            player_name: String::new(),
         }
     }
 
@@ -302,17 +306,19 @@ impl ChessServer {
             is_white: true,
             buffer: Vec::new(),
             server_address: "".to_string(),
+            player_name: String::new(),
         };
         let mut client2 = ChessClient {
             stream: Some(stream2),
             is_white: false,
             buffer: Vec::new(),
             server_address: "".to_string(),
+            player_name: String::new(),
         };
 
         // Send color assignments
-        let message1 = NetworkMessage::GameStart { is_white: true, game_id: "".to_string() };
-        let message2 = NetworkMessage::GameStart { is_white: false, game_id: "".to_string() };
+        let message1 = NetworkMessage::GameStart { is_white: true, game_id: "".to_string(), opponent_name: "".to_string() };
+        let message2 = NetworkMessage::GameStart { is_white: false, game_id: "".to_string(), opponent_name: "".to_string() };
         
         client1.stream.as_mut().unwrap().write_all(serde_json::to_string(&message1)?.as_bytes())?;
         client2.stream.as_mut().unwrap().write_all(serde_json::to_string(&message2)?.as_bytes())?;
